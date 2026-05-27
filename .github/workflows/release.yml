@@ -1,0 +1,129 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0 # need full history + tags to diff commits since last release
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+
+      - name: Test version logic
+        run: node --test .github/scripts/*.test.mjs
+
+      - name: Determine version bump
+        id: bump
+        run: |
+          set -euo pipefail
+
+          # Loop guard: never release off our own release commit. The commit
+          # carries [skip ci], which GitHub honors for push events; this subject
+          # check additionally covers manual workflow_dispatch runs (which
+          # [skip ci] does NOT skip).
+          SUBJECT=$(git log -1 --format=%s)
+          if printf '%s' "$SUBJECT" | grep -q '^chore(release):'; then
+            echo "Release commit detected; skipping."
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          LAST_TAG=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)
+          if [ -n "$LAST_TAG" ]; then
+            RANGE="${LAST_TAG}..HEAD"
+          else
+            RANGE="HEAD"
+          fi
+
+          # Theme version lives in the style.css header (no package.json).
+          CURRENT=$(sed -n -E 's/^Version:[[:space:]]*([0-9][0-9.]*).*/\1/p' style.css | head -1)
+          if [ -z "$CURRENT" ]; then
+            echo "::error::Could not read Version from style.css"
+            exit 1
+          fi
+
+          # Pipe full commit messages (record-separated by 0x1e) to the resolver.
+          OUT=$(git log "$RANGE" --format='%B%x1e' \
+            | CURRENT_VERSION="$CURRENT" node .github/scripts/next-version.mjs)
+
+          if [ -z "$OUT" ]; then
+            echo "No release-worthy commits since ${LAST_TAG:-start}; skipping."
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "release=true" >> "$GITHUB_OUTPUT"
+            echo "$OUT" >> "$GITHUB_OUTPUT"   # version=X.Y.Z and type=...
+            echo "Bumping ${CURRENT} -> $(echo "$OUT" | sed -n 's/^version=//p')"
+          fi
+
+      - name: Bump version in style.css
+        if: steps.bump.outputs.release == 'true'
+        env:
+          NEW: ${{ steps.bump.outputs.version }}
+        run: |
+          set -euo pipefail
+          sed -i -E "s/^(Version:[[:space:]]*).*/\1${NEW}/" style.css
+          # Fail loudly if the replacement did not land (no half-bumped state).
+          grep -q "Version: ${NEW}" style.css
+
+      - name: Commit, tag, and push
+        if: steps.bump.outputs.release == 'true'
+        env:
+          NEW: ${{ steps.bump.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add style.css
+          git commit -m "chore(release): v${NEW} [skip ci]"
+          git tag "v${NEW}"
+
+          git push origin HEAD:main
+          git push origin "v${NEW}"
+
+      - name: Build theme zip
+        if: steps.bump.outputs.release == 'true'
+        env:
+          NEW: ${{ steps.bump.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          # Archive HEAD (the release commit). The proto-theme/ prefix gives the
+          # zip a single top-level folder so WordPress installs it cleanly;
+          # .gitattributes export-ignore keeps .github/docs out of the package.
+          git archive --format=zip --prefix=proto-theme/ \
+            -o "dist/proto-theme-${NEW}.zip" HEAD
+
+      - name: Create versioned release
+        if: steps.bump.outputs.release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEW: ${{ steps.bump.outputs.version }}
+        run: |
+          set -euo pipefail
+          ZIP="dist/proto-theme-${NEW}.zip"
+          test -f "$ZIP" || { echo "::error::$ZIP missing"; exit 1; }
+          gh release create "v${NEW}" \
+            "$ZIP" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "v${NEW}" \
+            --generate-notes
