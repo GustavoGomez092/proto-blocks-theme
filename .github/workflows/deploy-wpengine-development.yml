@@ -1,0 +1,38 @@
+name: Deploy to WP Engine Development
+
+on:
+  push:
+    branches: [development]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # No build step: this theme ships its source as-is. Tailwind is
+      # compiled on the server by the Proto-Blocks plugin (it reads
+      # tailwind-theme.css), so there is nothing to bundle here -- the
+      # deploy is a straight file transfer.
+
+      - name: Remove development-only files before deploy
+        run: |
+          rm -rf .git
+          rm -rf .github
+          rm -rf docs
+          rm -f README.md
+          rm -f .gitignore
+          rm -f .DS_Store
+          find . -name ".DS_Store" -delete
+          find . -name "*.log" -delete
+
+      - name: Deploy to WP Engine
+        uses: wpengine/github-action-wpe-site-deploy@v3
+        with:
+          WPE_SSHG_KEY_PRIVATE: ${{ secrets.WPE_SSHG_KEY_PRIVATE }}
+          WPE_ENV: YOUR_DEV_INSTALL_NAME
+          REMOTE_PATH: wp-content/themes/proto-theme
+          FLAGS: -azvr --inplace --delete --exclude=".*"
+          CACHE_CLEAR: TRUE
