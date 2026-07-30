@@ -20,7 +20,7 @@ upsert_page() {
 }
 
 upsert_page "taxi-test-a" "Taxi Test A" \
-  '<!-- wp:proto-blocks/taxi-fixture-a /--><!-- wp:paragraph --><p><a href="/cart/">Cart</a></p><!-- /wp:paragraph -->'
+  '<!-- wp:proto-blocks/taxi-fixture-a /--><!-- wp:paragraph --><p><a href="/cart/">Cart</a> <a href="/cart-accessories/">Cart accessories</a></p><!-- /wp:paragraph -->'
 
 upsert_page "taxi-test-b" "Taxi Test B" \
   '<!-- wp:proto-blocks/taxi-fixture-a /--><!-- wp:proto-blocks/taxi-fixture-b /-->'

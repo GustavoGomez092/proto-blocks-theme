@@ -95,7 +95,12 @@ add_filter('script_loader_tag', function ($tag, $handle) {
         return $tag;
     }
 
-    return str_replace('<script ', '<script data-taxi-reload ', $tag);
+    // $tag can contain more than one <script> element — translations,
+    // wp_add_inline_script(), and wp_localize_script() all prepend/append
+    // their own <script id="..."> tags around the one with the src
+    // attribute, and every one of them matches a plain '<script '. Mark
+    // only the tag that actually carries the src, and only once.
+    return preg_replace('#<script(?=[^>]*\ssrc=)#', '<script data-taxi-reload', $tag, 1);
 }, 10, 2);
 
 /**
@@ -121,12 +126,20 @@ function proto_taxi_mark_ignored_links($content)
 
     foreach ($urls as $url) {
         $path = wp_parse_url($url, PHP_URL_PATH);
-        if (!$path) {
+        // Plain permalinks resolve every WooCommerce page to "/" (the real
+        // identity lives in the query string), and a bare "/" would
+        // substring-match every internal href on the site. Skip it.
+        $path = $path ? rtrim($path, '/') : '';
+        if ($path === '') {
             continue;
         }
 
+        // Anchor the right edge of the path so "/cart" cannot match
+        // "/cart-accessories/" — after the path, only an optional trailing
+        // slash followed by the closing quote, a query string, or a
+        // fragment is allowed.
         $content = preg_replace_callback(
-            '#<a\s+([^>]*href=["\'][^"\']*' . preg_quote($path, '#') . '[^"\']*["\'][^>]*)>#i',
+            '#<a\s+([^>]*href=["\'][^"\']*' . preg_quote($path, '#') . '(?:/)?(?=["\'?\#])[^"\']*["\'][^>]*)>#i',
             static function ($m) {
                 return str_contains($m[1], 'data-taxi-ignore')
                     ? $m[0]
