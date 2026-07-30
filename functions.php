@@ -4,6 +4,7 @@
  */
 
 require_once get_stylesheet_directory() . '/inc/proto-required-plugins.php';
+require_once get_stylesheet_directory() . '/inc/proto-taxi.php';
 
 add_action('after_setup_theme', function () {
     // Navigation is managed via the block-editor Navigation block in the Site
@@ -70,6 +71,9 @@ add_action('wp_enqueue_scripts', function () {
         'intro'          => ['file' => 'proto-intro.js',       'version' => '1.0.0',  'deps' => ['proto-init', 'proto-lottie']],
         'taxi-init'      => ['file' => 'proto-taxi.js', 'version' => '1.0.0',  'deps' => ['proto-taxi', 'proto-init']],
     ];
+    if (!proto_taxi_is_enabled()) {
+        unset($libs['taxi-e'], $libs['taxi'], $libs['taxi-init']);
+    }
     foreach ($libs as $handle => $lib) {
         $path = $dir . '/' . $lib['file'];
         if (!file_exists($path)) { continue; }
