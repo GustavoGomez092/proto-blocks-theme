@@ -109,6 +109,20 @@
 
   var E = window.E;
 
+  /**
+   * The live region that announces navigations to screen readers. Created
+   * here, at boot, before any navigation can occur: many screen readers
+   * only pick up a live region if it already exists in the accessibility
+   * tree before its content first changes, so creating it lazily inside
+   * announce() (on the first NAVIGATE_END) would silently miss announcing
+   * that first client-side navigation.
+   */
+  var announcer = document.createElement('div');
+  announcer.className = 'proto-taxi-announcer';
+  announcer.setAttribute('aria-live', 'polite');
+  announcer.setAttribute('aria-atomic', 'true');
+  document.body.appendChild(announcer);
+
   function liveView() {
     return document.querySelector('[data-taxi-view]');
   }
@@ -153,23 +167,25 @@
   /**
    * The header template part never re-renders, so WordPress's
    * current-menu-item classes would stay pinned to the first page loaded.
+   *
+   * Compares origin as well as pathname: an external link (e.g. a footer
+   * link to a sister site) whose path happens to match the current page's
+   * path must not be marked current. `link.href` is already a browser-
+   * resolved absolute URL, so `new URL()` on it cannot throw — no try/catch
+   * needed.
    */
   function syncNavState(url) {
-    var here = new URL(url, window.location.href).pathname.replace(/\/+$/, '');
+    var target = new URL(url, window.location.href);
+    var hereOrigin = target.origin;
+    var here = target.pathname.replace(/\/+$/, '');
     var links = document.querySelectorAll('.wp-block-navigation a[href]');
 
     for (var i = 0; i < links.length; i++) {
       var link = links[i];
       var parent = link.parentElement;
-      var there;
-
-      try {
-        there = new URL(link.href, window.location.href).pathname.replace(/\/+$/, '');
-      } catch (err) {
-        continue;
-      }
-
-      var isCurrent = there === here;
+      var there = new URL(link.href, window.location.href);
+      var isCurrent = there.origin === hereOrigin &&
+        there.pathname.replace(/\/+$/, '') === here;
 
       link.classList.toggle('current-menu-item', isCurrent);
       if (isCurrent) {
@@ -203,18 +219,10 @@
 
   /**
    * Announce the new page and move focus into it, so a swap is not silent
-   * for screen-reader and keyboard users.
+   * for screen-reader and keyboard users. (announcer itself is created at
+   * boot — see above.)
    */
-  var announcer = null;
-
   function announce(title) {
-    if (!announcer) {
-      announcer = document.createElement('div');
-      announcer.className = 'proto-taxi-announcer';
-      announcer.setAttribute('aria-live', 'polite');
-      announcer.setAttribute('aria-atomic', 'true');
-      document.body.appendChild(announcer);
-    }
     announcer.textContent = title;
   }
 

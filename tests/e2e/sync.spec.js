@@ -76,3 +76,22 @@ test('focus moves to the new view after navigation', async ({ page }) => {
     document.activeElement?.hasAttribute('data-taxi-view'))
   expect(focused).toBe(true)
 })
+
+test('nav active state is synced on navigation', async ({ page }) => {
+  await page.goto('/taxi-test-a/')
+  await navigate(page, '/taxi-test-b/')
+
+  const state = await page.evaluate(() => {
+    function info(slug) {
+      const link = document.querySelector(`.wp-block-navigation a[href$="/${slug}/"]`)
+      return link && {
+        current: link.classList.contains('current-menu-item'),
+        ariaCurrent: link.getAttribute('aria-current')
+      }
+    }
+    return { a: info('taxi-test-a'), b: info('taxi-test-b') }
+  })
+
+  expect(state.a).toEqual({ current: false, ariaCurrent: null })
+  expect(state.b).toEqual({ current: true, ariaCurrent: 'page' })
+})
