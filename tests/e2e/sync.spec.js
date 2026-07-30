@@ -77,6 +77,23 @@ test('focus moves to the new view after navigation', async ({ page }) => {
   expect(focused).toBe(true)
 })
 
+test('announcer live region exists before any navigation', async ({ page }) => {
+  await page.goto('/taxi-test-a/')
+  // Deliberately do not navigate: the pre-fix behaviour created
+  // .proto-taxi-announcer lazily inside announce(), on the first
+  // NAVIGATE_END, so it would not exist yet on a freshly loaded page.
+  // Calling navigate() here would make this pass under that old lazy
+  // behaviour too and defeat the point of the test.
+  const announcer = await page.evaluate(() => {
+    const el = document.querySelector('.proto-taxi-announcer')
+    return el && {
+      ariaLive: el.getAttribute('aria-live'),
+      ariaAtomic: el.getAttribute('aria-atomic')
+    }
+  })
+  expect(announcer).toEqual({ ariaLive: 'polite', ariaAtomic: 'true' })
+})
+
 test('nav active state is synced on navigation', async ({ page }) => {
   await page.goto('/taxi-test-a/')
   await navigate(page, '/taxi-test-b/')
