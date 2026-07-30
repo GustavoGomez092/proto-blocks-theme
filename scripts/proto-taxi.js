@@ -101,4 +101,173 @@
       return this;
     }
   };
+
+  /* ----------------------------------------------------------------------
+     Everything below is what Taxi does NOT do. Taxi sets document.title
+     (Renderer.js:38) and nothing else outside the swapped view.
+     ------------------------------------------------------------------- */
+
+  var E = window.E;
+
+  function liveView() {
+    return document.querySelector('[data-taxi-view]');
+  }
+
+  function dispatch(name, detail) {
+    document.dispatchEvent(new CustomEvent(name, { detail: detail }));
+  }
+
+  /** Copy <body class> from the fetched document. */
+  function syncBodyClass(page) {
+    if (page && page.body) {
+      document.body.className = page.body.className;
+    }
+  }
+
+  /**
+   * Replace the head tags that describe the page. Yoast and friends emit
+   * these per-URL, so a stale set would report the wrong page to crawlers
+   * and share sheets.
+   */
+  var HEAD_SELECTORS = [
+    'meta[name="description"]',
+    'link[rel="canonical"]',
+    'meta[property^="og:"]',
+    'meta[name^="twitter:"]'
+  ].join(',');
+
+  function syncHead(page) {
+    if (!page || !page.head) return;
+
+    var current = document.head.querySelectorAll(HEAD_SELECTORS);
+    for (var i = 0; i < current.length; i++) {
+      current[i].remove();
+    }
+
+    var incoming = page.head.querySelectorAll(HEAD_SELECTORS);
+    for (var n = 0; n < incoming.length; n++) {
+      document.head.appendChild(incoming[n].cloneNode(true));
+    }
+  }
+
+  /**
+   * The header template part never re-renders, so WordPress's
+   * current-menu-item classes would stay pinned to the first page loaded.
+   */
+  function syncNavState(url) {
+    var here = new URL(url, window.location.href).pathname.replace(/\/+$/, '');
+    var links = document.querySelectorAll('.wp-block-navigation a[href]');
+
+    for (var i = 0; i < links.length; i++) {
+      var link = links[i];
+      var parent = link.parentElement;
+      var there;
+
+      try {
+        there = new URL(link.href, window.location.href).pathname.replace(/\/+$/, '');
+      } catch (err) {
+        continue;
+      }
+
+      var isCurrent = there === here;
+
+      link.classList.toggle('current-menu-item', isCurrent);
+      if (isCurrent) {
+        link.setAttribute('aria-current', 'page');
+      } else {
+        link.removeAttribute('aria-current');
+      }
+
+      if (parent && parent.classList.contains('wp-block-navigation-item')) {
+        parent.classList.toggle('current-menu-item', isCurrent);
+        parent.classList.toggle('current_page_item', isCurrent);
+      }
+    }
+  }
+
+  /** Keep the admin bar's "Edit" link pointing at the page being viewed. */
+  function syncAdminBar(page) {
+    var current = document.getElementById('wp-admin-bar-edit');
+    if (!current || !page) return;
+
+    var incoming = page.getElementById
+      ? page.getElementById('wp-admin-bar-edit')
+      : page.querySelector('#wp-admin-bar-edit');
+
+    if (incoming) {
+      current.replaceWith(incoming.cloneNode(true));
+    } else {
+      current.remove();
+    }
+  }
+
+  /**
+   * Announce the new page and move focus into it, so a swap is not silent
+   * for screen-reader and keyboard users.
+   */
+  var announcer = null;
+
+  function announce(title) {
+    if (!announcer) {
+      announcer = document.createElement('div');
+      announcer.className = 'proto-taxi-announcer';
+      announcer.setAttribute('aria-live', 'polite');
+      announcer.setAttribute('aria-atomic', 'true');
+      document.body.appendChild(announcer);
+    }
+    announcer.textContent = title;
+  }
+
+  function focusView(container) {
+    if (!container) return;
+    container.setAttribute('tabindex', '-1');
+    container.focus({ preventScroll: true });
+  }
+
+  E.on('NAVIGATE_OUT', function (payload) {
+    var container = payload && payload.from && payload.from.renderer
+      ? payload.from.renderer.content
+      : liveView();
+
+    dispatch('proto:page-leave', { container: container });
+  });
+
+  E.on('NAVIGATE_IN', function (payload) {
+    if (!payload || !payload.to) return;
+
+    var page = payload.to.page;
+    syncBodyClass(page);
+    syncHead(page);
+    syncAdminBar(page);
+    syncNavState(payload.to.finalUrl || window.location.href);
+  });
+
+  E.on('NAVIGATE_END', function (payload) {
+    var container = payload && payload.to && payload.to.renderer
+      ? payload.to.renderer.content
+      : liveView();
+
+    focusView(container);
+    announce(document.title);
+
+    dispatch('proto:page-ready', {
+      container: container,
+      url: window.location.href
+    });
+  });
+
+  /* The initial page load gets the same event, so block code has exactly one
+     contract to write against. */
+  function readyOnLoad() {
+    dispatch('proto:page-ready', {
+      container: liveView(),
+      url: window.location.href
+    });
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', readyOnLoad);
+  } else {
+    readyOnLoad();
+  }
 })();

@@ -102,3 +102,18 @@ html.proto-intro-active { overflow: hidden; }
 .proto-blocks-scope ol.wp-block-list { list-style: decimal; }
 .proto-blocks-scope ul.wp-block-list { list-style: disc; }
 .is-layout-flow > .wp-block-spacer { margin-block-start: 0; margin-block-end: 0; }
+
+/* Visually hidden live region announcing Taxi navigations. */
+.proto-taxi-announcer {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+[data-taxi-view]:focus { outline: none; }
