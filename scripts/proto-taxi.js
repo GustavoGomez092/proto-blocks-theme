@@ -232,10 +232,34 @@
     container.focus({ preventScroll: true });
   }
 
+  /**
+   * Kill only the ScrollTriggers whose trigger element lived inside the view
+   * being removed. Triggers created by the persistent header/footer survive.
+   */
+  function killScrollTriggersIn(container) {
+    if (!window.ScrollTrigger || !container) return;
+
+    var all = window.ScrollTrigger.getAll();
+    for (var i = 0; i < all.length; i++) {
+      var trigger = all[i].trigger || all[i].vars.trigger;
+      if (trigger && container.contains(trigger)) {
+        all[i].kill();
+      }
+    }
+  }
+
   E.on('NAVIGATE_OUT', function (payload) {
     var container = payload && payload.from && payload.from.renderer
       ? payload.from.renderer.content
       : liveView();
+
+    killScrollTriggersIn(container);
+
+    if (window.protoLenis) {
+      window.protoLenis.scrollTo(0, { immediate: true });
+    } else {
+      window.scrollTo(0, 0);
+    }
 
     dispatch('proto:page-leave', { container: container });
   });
@@ -257,6 +281,14 @@
 
     focusView(container);
     announce(document.title);
+
+    /* The new content changed the document height; both libraries cache it. */
+    if (window.protoLenis && typeof window.protoLenis.resize === 'function') {
+      window.protoLenis.resize();
+    }
+    if (window.ScrollTrigger) {
+      window.ScrollTrigger.refresh();
+    }
 
     dispatch('proto:page-ready', {
       container: container,
