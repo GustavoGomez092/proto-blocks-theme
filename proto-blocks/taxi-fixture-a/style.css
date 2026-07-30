@@ -1,0 +1,12 @@
+/**
+ * Styles for Taxi Fixture A block
+ */
+
+.wp-block-proto-blocks-taxi-fixture-a {
+    display: block;
+}
+
+.wp-block-proto-blocks-taxi-fixture-a__heading {
+    /* Styles for heading field */
+}
+
