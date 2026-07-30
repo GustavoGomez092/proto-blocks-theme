@@ -100,7 +100,11 @@ add_filter('script_loader_tag', function ($tag, $handle) {
     // their own <script id="..."> tags around the one with the src
     // attribute, and every one of them matches a plain '<script '. Mark
     // only the tag that actually carries the src, and only once.
-    return preg_replace('#<script(?=[^>]*\ssrc=)#', '<script data-taxi-reload', $tag, 1);
+    $result = preg_replace('#<script(?=[^>]*\ssrc=)#', '<script data-taxi-reload', $tag, 1);
+
+    // preg_replace() returns null on a PCRE failure (e.g. backtrack limit) —
+    // fall back to the untouched tag rather than dropping the script.
+    return $result ?? $tag;
 }, 10, 2);
 
 /**
@@ -138,7 +142,7 @@ function proto_taxi_mark_ignored_links($content)
         // "/cart-accessories/" — after the path, only an optional trailing
         // slash followed by the closing quote, a query string, or a
         // fragment is allowed.
-        $content = preg_replace_callback(
+        $result = preg_replace_callback(
             '#<a\s+([^>]*href=["\'][^"\']*' . preg_quote($path, '#') . '(?:/)?(?=["\'?\#])[^"\']*["\'][^>]*)>#i',
             static function ($m) {
                 return str_contains($m[1], 'data-taxi-ignore')
@@ -147,6 +151,11 @@ function proto_taxi_mark_ignored_links($content)
             },
             $content
         );
+
+        // preg_replace_callback() returns null on a PCRE failure (e.g.
+        // backtrack limit) — fall back to the content as it stood before
+        // this URL's pass rather than blanking the whole block.
+        $content = $result ?? $content;
     }
 
     return $content;

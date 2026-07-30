@@ -1,7 +1,10 @@
 const { test, expect } = require('@playwright/test')
 const { execFileSync } = require('child_process')
+const fs = require('fs')
+const path = require('path')
 
 const WP_PATH = process.env.WP_PATH || '/Users/gustavogomez/Local Sites/cadco/app/public'
+const wpCli = (args) => execFileSync('wp', [...args, '--path=' + WP_PATH], { encoding: 'utf8' }).trim()
 
 test('block view scripts are marked for reload, libraries are not', async ({ page }) => {
   await page.goto('/taxi-test-b/')
@@ -52,6 +55,55 @@ test('links that merely share a path prefix with an ignored URL are not marked',
     [...document.querySelectorAll('[data-taxi-view] a[href*="/cart-accessories"]')]
       .some(a => a.hasAttribute('data-taxi-ignore')))
   expect(wronglyMarked).toBe(false)
+})
+
+test('an ignore URL without a trailing slash still cannot prefix-collide (exercises the anchor)', async ({ page }) => {
+  // On this install wc_get_page_id('cart') -> get_permalink() -> wp_parse_url() resolves to
+  // "/cart/" WITH a trailing slash (the site runs /%postname%/ permalinks), which alone already
+  // stops "/cart" from colliding with "/cart-accessories/" — so the test above does not actually
+  // exercise the right-edge anchor added to proto_taxi_mark_ignored_links(). The anchor exists to
+  // protect permalink structures without a trailing slash (e.g. /%postname%), which this install
+  // doesn't use. Inject a slash-less URL via the public proto_taxi_ignore_urls filter (a temporary
+  // mu-plugin, removed in `finally`) and a temporary page (deleted in `finally`) to prove the
+  // anchor holds even without a trailing slash doing the work for it.
+  const muPluginPath = path.join(WP_PATH, 'wp-content/mu-plugins/proto-taxi-test-anchor.php')
+  fs.mkdirSync(path.dirname(muPluginPath), { recursive: true })
+  fs.writeFileSync(muPluginPath, `<?php
+add_filter('proto_taxi_ignore_urls', function ($urls) {
+    $urls[] = home_url('/cart-test-noslash');
+    return $urls;
+});
+`)
+
+  let pageId = null
+  try {
+    pageId = wpCli([
+      'post', 'create',
+      '--post_type=page',
+      '--post_title=Taxi Anchor Test',
+      '--post_status=publish',
+      '--post_content=<!-- wp:paragraph --><p><a href="/cart-test-noslash">Exact</a> <a href="/cart-test-noslash-decoy/">Decoy</a></p><!-- /wp:paragraph -->',
+      '--porcelain',
+    ])
+
+    await page.goto(`/?page_id=${pageId}`)
+    const marks = await page.evaluate(() => {
+      const get = (href) => {
+        const a = [...document.querySelectorAll('a')].find(el => el.getAttribute('href') === href)
+        return a ? a.hasAttribute('data-taxi-ignore') : null
+      }
+      return {
+        exact: get('/cart-test-noslash'),
+        decoy: get('/cart-test-noslash-decoy/'),
+      }
+    })
+    expect(marks).toEqual({ exact: true, decoy: false })
+  } finally {
+    if (pageId) {
+      wpCli(['post', 'delete', pageId, '--force'])
+    }
+    fs.unlinkSync(muPluginPath)
+  }
 })
 
 test('server-rendered cart link is marked ignore', async ({ page }) => {
