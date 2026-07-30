@@ -173,7 +173,7 @@ upsert_page() {
 }
 
 upsert_page "taxi-test-a" "Taxi Test A" \
-  '<!-- wp:proto-blocks/taxi-fixture-a /-->'
+  '<!-- wp:proto-blocks/taxi-fixture-a /--><!-- wp:paragraph --><p><a href="/cart/">Cart</a></p><!-- /wp:paragraph -->'
 
 upsert_page "taxi-test-b" "Taxi Test B" \
   '<!-- wp:proto-blocks/taxi-fixture-a /--><!-- wp:proto-blocks/taxi-fixture-b /-->'
@@ -585,16 +585,15 @@ test('block view scripts are marked for reload, libraries are not', async ({ pag
   })
 })
 
-test('woocommerce flow links are marked ignore', async ({ page }) => {
+test('server-rendered links to ignored URLs are marked', async ({ page }) => {
   await page.goto('/taxi-test-a/')
-  const ignored = await page.evaluate(() => {
-    const a = document.createElement('a')
-    a.href = '/cart/'
-    document.querySelector('[data-taxi-view]').appendChild(a)
-    return document.querySelector('a[href="/cart/"]').hasAttribute('data-taxi-ignore')
-  })
-  // A link injected at runtime is NOT marked — marking happens server-side.
-  expect(ignored).toBe(false)
+  // The fixture page content includes a real cart link (tests/fixtures/setup.sh).
+  const links = page.locator('[data-taxi-view] a[href*="/cart"]')
+  expect(await links.count()).toBeGreaterThan(0)
+  const marked = await page.evaluate(() =>
+    [...document.querySelectorAll('[data-taxi-view] a[href*="/cart"]')]
+      .every(a => a.hasAttribute('data-taxi-ignore')))
+  expect(marked).toBe(true)
 })
 
 test('server-rendered cart link is marked ignore', async ({ page }) => {
@@ -718,8 +717,10 @@ add_filter('script_loader_tag', function ($tag, $handle) {
 
 /**
  * Mark links to stateful WooCommerce pages so Taxi leaves them alone.
+ *
+ * render_block covers both post content and template-level blocks (the
+ * navigation in the header), which is everything a block theme renders.
  */
-add_filter('the_content', 'proto_taxi_mark_ignored_links', 20);
 add_filter('render_block', function ($content, $block) {
     return proto_taxi_mark_ignored_links($content);
 }, 20, 2);
