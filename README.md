@@ -174,10 +174,25 @@ Back or Forward **while one is still running**, Taxi does not queue or
 interrupt it — `allowInterruption` is `false` — it silently restores the
 previous history entry, logs `A transition is currently in progress` to the
 console, and the popstate navigation is dropped. This is stock Taxi
-behaviour, not a bug in this integration. If it needs to change, pass
-`allowInterruption: true` when constructing the `Core` in
-`scripts/proto-taxi.js`, understanding that a transition can then be
-interrupted mid-animation.
+behaviour, not a bug in this integration.
+
+To shrink the window, shorten the tween durations in the `ProtoFade`
+transition in `scripts/proto-taxi.js` — 0.25s out and 0.3s in roughly halves
+it and reads as snappier anyway.
+
+**Do not reach for Taxi's `allowInterruption: true` to solve this.** The
+synchronisation layer in `scripts/proto-taxi.js` assumes one navigation at a
+time. With interruption enabled two navigations overlap, each emitting its own
+`NAVIGATE_IN`, and the order is decided by which fetch finishes first rather
+than which link was clicked first. The visible content comes from whichever
+renderer updated last; the head tags come from whichever `NAVIGATE_IN` emitted
+last. Those can disagree, leaving the document advertising one page's
+`canonical` and `og:url` while displaying another — wrong for crawlers, share
+sheets and analytics, and with nothing visibly broken on screen to reveal it.
+The announcer would also read the wrong title. Making the option safe requires
+threading a per-navigation token through `syncBodyClass`, `syncHead`,
+`syncNavState` and `syncAdminBar` so each can check whether it still belongs to
+the current navigation before touching the document.
 
 ### PHP filters
 
