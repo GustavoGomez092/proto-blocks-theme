@@ -3595,11 +3595,26 @@ if ( ! function_exists( 'tgmpa_load_bulk_installer' ) ) {
 							/* translators: 1: plugin name. */
 							$this->upgrader->strings['skin_update_failed'] = __( 'The installation of %1$s failed.', 'tgmpa' );
 
+							/*
+							 * PROTO-THEME PATCH -- do not reintroduce the "%2$s" Show/Hide Details
+							 * anchor in the two 'skin_update_successful' strings below.
+							 *
+							 * Stock TGMPA 2.6.1 appends `<a onclick="%2$s">Show Details</a>` to this
+							 * string, expecting WordPress core to pass the toggle JS as a second
+							 * sprintf() argument. Core no longer does: Bulk_Upgrader_Skin::after()
+							 * calls `sprintf( $strings['skin_update_successful'], $title )` with the
+							 * title only, and renders its own "More details." button instead. Under
+							 * PHP 8 the unsatisfied %2$s is a fatal ArgumentCountError rather than a
+							 * warning, so bulk-installing required plugins dies on the first success.
+							 *
+							 * Keeping only %1$s matches core's own string ('%s updated successfully.')
+							 * and core still supplies the details toggle, so no UI is lost.
+							 */
 							if ( $this->tgmpa->is_automatic ) {
 								// Automatic activation strings.
 								$this->upgrader->strings['skin_upgrade_start'] = __( 'The installation and activation process is starting. This process may take a while on some hosts, so please be patient.', 'tgmpa' );
 								/* translators: 1: plugin name. */
-								$this->upgrader->strings['skin_update_successful'] = __( '%1$s installed and activated successfully.', 'tgmpa' ) . ' <a href="#" class="hide-if-no-js" onclick="%2$s"><span>' . esc_html__( 'Show Details', 'tgmpa' ) . '</span><span class="hidden">' . esc_html__( 'Hide Details', 'tgmpa' ) . '</span>.</a>';
+								$this->upgrader->strings['skin_update_successful'] = __( '%1$s installed and activated successfully.', 'tgmpa' );
 								$this->upgrader->strings['skin_upgrade_end']       = __( 'All installations and activations have been completed.', 'tgmpa' );
 								/* translators: 1: plugin name, 2: action number 3: total number of actions. */
 								$this->upgrader->strings['skin_before_update_header'] = __( 'Installing and Activating Plugin %1$s (%2$d/%3$d)', 'tgmpa' );
@@ -3607,7 +3622,7 @@ if ( ! function_exists( 'tgmpa_load_bulk_installer' ) ) {
 								// Default installation strings.
 								$this->upgrader->strings['skin_upgrade_start'] = __( 'The installation process is starting. This process may take a while on some hosts, so please be patient.', 'tgmpa' );
 								/* translators: 1: plugin name. */
-								$this->upgrader->strings['skin_update_successful'] = esc_html__( '%1$s installed successfully.', 'tgmpa' ) . ' <a href="#" class="hide-if-no-js" onclick="%2$s"><span>' . esc_html__( 'Show Details', 'tgmpa' ) . '</span><span class="hidden">' . esc_html__( 'Hide Details', 'tgmpa' ) . '</span>.</a>';
+								$this->upgrader->strings['skin_update_successful'] = esc_html__( '%1$s installed successfully.', 'tgmpa' );
 								$this->upgrader->strings['skin_upgrade_end']       = __( 'All installations have been completed.', 'tgmpa' );
 								/* translators: 1: plugin name, 2: action number 3: total number of actions. */
 								$this->upgrader->strings['skin_before_update_header'] = __( 'Installing Plugin %1$s (%2$d/%3$d)', 'tgmpa' );
