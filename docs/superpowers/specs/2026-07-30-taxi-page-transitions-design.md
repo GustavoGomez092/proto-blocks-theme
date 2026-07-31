@@ -155,8 +155,11 @@ Both are dispatched on `document`.
 
 Default is a GSAP fade using the already-vendored `window.gsap`:
 
-- leave: `opacity 1 → 0`, `y 0 → -20`, ~0.4s
-- enter: `opacity 0 → 1`, `y 20 → 0`, ~0.5s
+- leave: `opacity 1 → 0`, ~0.4s
+- enter: `opacity 0 → 1`, ~0.5s
+
+Opacity only — the original design paired these with a ±20px `y` translate, which
+was dropped in favour of a plain cross-fade.
 
 `prefers-reduced-motion: reduce` short-circuits both to an instant swap.
 
