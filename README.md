@@ -154,11 +154,33 @@ interrupted mid-animation.
 
 ### Upgrading Taxi
 
+`taxi.umd.js` externalizes its dependency and reads `window.E` at runtime,
+which `e.umd.js` provides — the two must always be upgraded together. Run
+this from a scratch directory (not inside the theme):
+
 ```bash
-npm pack @unseenco/taxi@<version> && npm pack @unseenco/e@<version>
-# copy dist/taxi.umd.js and dist/e.umd.js into scripts/, then bump the
-# 'version' values in the $libs map in functions.php
+npm pack @unseenco/taxi@<version> @unseenco/e@<version>
+
+mkdir -p taxi-upgrade e-upgrade
+tar -xzf unseenco-taxi-<version>.tgz -C taxi-upgrade --strip-components=1
+tar -xzf unseenco-e-<version>.tgz -C e-upgrade --strip-components=1
+
+# copy only the UMD builds — never the .map files, which reference sources
+# the theme doesn't ship and would leave broken sourcemap references
+cp taxi-upgrade/dist/taxi.umd.js e-upgrade/dist/e.umd.js /path/to/proto-theme/scripts/
+
+rm -rf unseenco-taxi-<version>.tgz unseenco-e-<version>.tgz taxi-upgrade e-upgrade
 ```
+
+`npm pack` only writes `.tgz` tarballs to the current directory — it does not
+extract them, so the `tar` step above is required before there is a `dist/`
+to copy from. Vendored files must stay byte-identical to the npm package's
+`dist/` originals; do not hand-edit them.
+
+Then bump the two `version` values in the `$libs` map in `functions.php`
+(the `taxi-e` and `taxi` entries) to match, and keep the `'taxi' => [...,
+'deps' => ['proto-taxi-e']]` dependency in place so `e.umd.js` always loads
+first.
 
 ### Running the E2E suite
 
