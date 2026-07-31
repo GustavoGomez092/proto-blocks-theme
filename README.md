@@ -85,7 +85,17 @@ Two cases need the lifecycle event instead:
   they're printed outside the `script_loader_tag` filter entirely — the theme
   never gets a chance to tag them — and even if it could, an ES module only
   evaluates once per resolved URL, so re-appending the tag would not re-run
-  it anyway.
+  it anyway. **This is not just a Proto-Blocks concern**: it's a general
+  WordPress limitation that also affects *core* blocks. WordPress's own
+  Interactivity API (`@wordpress/block-library/navigation/view-js-module`,
+  and plugins that hook into it — e.g. WooCommerce's `customer-account.js`)
+  ships as `type="module"` and hydrates `data-wp-interactive` regions once
+  at load, with no observer for DOM inserted later by a Taxi swap. Core
+  blocks that depend on it — the image lightbox, the query loop's enhanced
+  pagination, the file block — go inert inside `<main>` after a client-side
+  navigation. There is no `data-taxi-reload`-style fix for these; if a page
+  needs one of them, either add it to `proto_taxi_ignore_urls` (full page
+  loads that route) or accept the degradation.
 - Code that must react to a navigation without owning a block script.
 
 ```js
@@ -131,6 +141,32 @@ and the two WooCommerce add-to-cart triggers (`.add_to_cart_button` and
 checkout and my-account pages are marked `data-taxi-ignore` server-side.
 Forms always submit with a full page load — Taxi only intercepts `<a>` clicks.
 
+### Routes this integration doesn't cover
+
+The `[data-taxi]` / `[data-taxi-view]` wrapper only exists because this
+theme's own templates (`templates/index.html`, `templates/page.html`,
+`templates/single.html`) put it there. Any route rendered by a **plugin-
+supplied** block template never gets it — WooCommerce, for example, ships
+its own `archive-product`, `single-product` and `taxonomy-product_cat`
+templates, so `/shop/` and every product page have zero `[data-taxi-view]`
+elements. Clicking into one still works — Taxi's `createCacheEntry` throws
+on the missing wrapper, the `.catch` falls through to a real
+`window.location` navigation — but it wastes a full WordPress render on
+every click, and, because `enablePrefetch` defaults to `true`, on every
+hover/focus too (`preload()`'s catch logs a console warning each time).
+
+If a fork adds a plugin whose templates aren't wrapped, either:
+
+- add the wrapper to that plugin's templates (override them in the theme), or
+- add the route's URL(s) to `proto_taxi_ignore_urls` so links to it stay full
+  page loads and skip the wasted prefetch/click round-trip.
+
+The WooCommerce shop page is handled in code already — `wc_get_page_id('shop')`
+is included in the theme's `proto_taxi_ignore_urls` default alongside cart,
+checkout and my-account, since it's the one plugin-supplied route linked from
+the default navigation. Other WooCommerce routes (individual products,
+product categories) are not — add them via the filter if needed.
+
 ### Known behaviour: Back/Forward during a transition
 
 The fade transition takes ~0.9s (0.4s out, 0.5s in). If the user presses
@@ -150,7 +186,7 @@ interrupted mid-animation.
 | `proto_taxi_enabled` | Master switch. `add_filter('proto_taxi_enabled', '__return_false');`. Always `false` in `wp-admin` and on JSON requests, regardless of the filter. |
 | `proto_taxi_reload_handles` | Extra script handles (beyond the `proto-blocks-` prefix) to mark `data-taxi-reload`. Empty by default. |
 | `proto_taxi_denied_handles` | Handles that must never be re-run. Defaults to the theme's own animation/runtime scripts (`proto-gsap`, `proto-split-text`, `proto-scroll-trigger`, `proto-lottie`, `proto-lenis`, `proto-taxi-e`, `proto-taxi`, `proto-taxi-init`, `proto-init`, `proto-intro`) — re-running any of these would create a second Lenis instance, RAF loop or Taxi Core. The deny list wins over the `proto-blocks-` prefix. |
-| `proto_taxi_ignore_urls` | Extra URLs whose links get `data-taxi-ignore`. Defaults to the WooCommerce cart/checkout/my-account permalinks when WooCommerce is active, otherwise empty. |
+| `proto_taxi_ignore_urls` | Extra URLs whose links get `data-taxi-ignore`. Defaults to the WooCommerce cart/checkout/my-account/shop permalinks when WooCommerce is active, otherwise empty. See "Routes this integration doesn't cover" above for why `shop` is included. |
 
 ### Upgrading Taxi
 
@@ -183,6 +219,15 @@ Then bump the two `version` values in the `$libs` map in `functions.php`
 first.
 
 ### Running the E2E suite
+
+**Prerequisite:** the site must use pretty permalinks (Settings → Permalinks
+→ "Post name", i.e. `/%postname%/`), not "Plain". Under plain permalinks
+every page resolves to a `/?page_id=…` (or `/?p=…`) URL whose path is just
+`/`, and `proto_taxi_mark_ignored_links()` in `inc/proto-taxi.php`
+deliberately skips a bare `/` (it would otherwise substring-match every
+internal href on the site) — so the ignore-URL marking it tests never fires.
+Several assertions in `tests/e2e/php-integration.spec.js` depend on real
+paths being present.
 
 ```bash
 npm install && npx playwright install chromium
