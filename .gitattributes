@@ -9,3 +9,5 @@
 /package-lock.json   export-ignore
 /playwright.config.js export-ignore
 /tests               export-ignore
+/proto-blocks/taxi-fixture-a export-ignore
+/proto-blocks/taxi-fixture-b export-ignore
