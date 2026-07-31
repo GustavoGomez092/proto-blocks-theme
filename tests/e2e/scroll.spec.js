@@ -45,6 +45,67 @@ test('scroll resets to the top on navigation', async ({ page }) => {
   expect(y).toBeLessThan(20)
 })
 
+test('scroll resets to the top even when Lenis is stopped', async ({ page }) => {
+  await page.goto('/taxi-test-b/')
+  // See the identical wait in the test above: proto-intro.js locks Lenis
+  // for ~1.1s on a fresh session, which would otherwise mask the effect
+  // this test is isolating (our own explicit stop() call, below).
+  await page.waitForFunction(() => !document.querySelector('.proto-intro'))
+  await page.addStyleTag({ content: 'body { min-height: 3000px; }' })
+  await page.evaluate(() => window.protoLenis?.resize())
+  await page.evaluate(() => window.protoLenis?.scrollTo(400, { immediate: true }))
+  await page.waitForTimeout(200)
+  expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(100)
+
+  // Lenis's own scrollTo() is a silent no-op while the instance is stopped
+  // or locked (`if (!this.isStopped && !this.isLocked || force)` in
+  // lenis.min.js). proto-init.js documents protoLenis.stop()/.start() as
+  // the block-level scroll-lock API (for overlays, mobile nav, etc.), so a
+  // navigation that happens while something still holds that lock must not
+  // leave the incoming page stuck mid-scroll.
+  await page.evaluate(() => window.protoLenis?.stop())
+
+  await navigate(page, '/taxi-test-a/')
+  await page.waitForTimeout(400)
+  const y = await page.evaluate(() => window.scrollY)
+  expect(y).toBeLessThan(20)
+})
+
+test('scroll reset happens during the swap, not before the outgoing view fades', async ({ page }) => {
+  await page.goto('/taxi-test-b/')
+  await page.waitForFunction(() => !document.querySelector('.proto-intro'))
+  await page.addStyleTag({ content: 'body { min-height: 3000px; }' })
+  await page.evaluate(() => window.protoLenis?.resize())
+  await page.evaluate(() => window.protoLenis?.scrollTo(400, { immediate: true }))
+  await page.waitForTimeout(200)
+  expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(100)
+
+  await page.evaluate((href) => {
+    const a = document.createElement('a')
+    a.href = href
+    a.id = 'proto-nav'
+    document.querySelector('[data-taxi-view] main').appendChild(a)
+  }, '/taxi-test-a/')
+  await page.evaluate(() => document.getElementById('proto-nav').click())
+
+  // onLeave's fade-out tween runs ~0.4s (duration: 0.4, ease: power2.inOut)
+  // before the old view is torn down and onEnter — where the scroll reset
+  // now lives — gets to run. Sample partway through that window: under the
+  // pre-fix placement (the reset in the NAVIGATE_OUT handler, which fires
+  // essentially at click time, before onLeave even starts animating) the
+  // page would already be pinned to scrollY 0 here, visibly snapping to
+  // the top while the outgoing content is still fully opaque.
+  await page.waitForTimeout(150)
+  const midY = await page.evaluate(() => window.scrollY)
+  expect(midY).toBeGreaterThan(100)
+
+  await page.waitForFunction(
+    () => window.protoTaxi && window.protoTaxi.core.isTransitioning === false
+  )
+  const finalY = await page.evaluate(() => window.scrollY)
+  expect(finalY).toBeLessThan(20)
+})
+
 test('libraries are never re-executed', async ({ page }) => {
   await page.goto('/taxi-test-a/')
   await page.evaluate(() => { window.__lenisRef = window.protoLenis })

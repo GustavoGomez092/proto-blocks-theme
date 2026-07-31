@@ -48,6 +48,29 @@
     return el.querySelector('main') || el;
   }
 
+  /**
+   * Reset the scroll position for the incoming view.
+   *
+   * Called from the fade Transition's onEnter, at the point where the old
+   * view has already been removed and the new one is appended (so document
+   * height — and therefore Lenis's scroll limit — is correct) but still at
+   * opacity: 0, making the jump invisible.
+   *
+   * `force: true` is required: Lenis's own scrollTo() silently no-ops
+   * while the instance is stopped or locked
+   * (`if (!this.isStopped && !this.isLocked || force)` in lenis.min.js), and
+   * block code is documented (proto-init.js) to call `protoLenis.stop()` /
+   * `.start()` as a scroll-lock API — an overlay or mobile nav left open
+   * across a navigation must not leave the incoming page stuck mid-scroll.
+   */
+  function resetScroll() {
+    if (window.protoLenis) {
+      window.protoLenis.scrollTo(0, { immediate: true, force: true });
+    } else {
+      window.scrollTo(0, 0);
+    }
+  }
+
   var ProtoFade = class extends taxi.Transition {
     onLeave(props) {
       var el = animTarget(props.from);
@@ -65,6 +88,8 @@
     }
 
     onEnter(props) {
+      resetScroll();
+
       var el = animTarget(props.to);
       if (reduced.matches || !window.gsap || !el) {
         props.done();
@@ -170,9 +195,12 @@
    *
    * Compares origin as well as pathname: an external link (e.g. a footer
    * link to a sister site) whose path happens to match the current page's
-   * path must not be marked current. `link.href` is already a browser-
-   * resolved absolute URL, so `new URL()` on it cannot throw — no try/catch
-   * needed.
+   * path must not be marked current. `link.href` is a browser-resolved
+   * absolute URL for a plain <a>, so `new URL()` on it normally cannot
+   * throw — except an SVG <a> element's `.href` is an SVGAnimatedString,
+   * not a string, which makes `new URL()` throw "Invalid URL". That's
+   * handled by the `safe()` wrapper around this function's caller, not
+   * here — see the NAVIGATE_IN handler below.
    */
   function syncNavState(url) {
     var target = new URL(url, window.location.href);
@@ -235,6 +263,12 @@
   /**
    * Kill only the ScrollTriggers whose trigger element lived inside the view
    * being removed. Triggers created by the persistent header/footer survive.
+   *
+   * kill(false) is required: ScrollTrigger's kill(revert, ...) forwards an
+   * undefined `revert` by default, and its internal disable() treats
+   * `undefined !== false` as truthy, so a bare kill() reverts — stripping
+   * any tween-set inline style (e.g. a pre-reveal opacity: 0) from the
+   * outgoing elements, popping them visible right as the fade-out starts.
    */
   function killScrollTriggersIn(container) {
     if (!window.ScrollTrigger || !container) return;
@@ -243,8 +277,25 @@
     for (var i = 0; i < all.length; i++) {
       var trigger = all[i].trigger || all[i].vars.trigger;
       if (trigger && container.contains(trigger)) {
-        all[i].kill();
+        all[i].kill(false);
       }
+    }
+  }
+
+  /**
+   * @unseenco/e's bus (E.on/E.emit) runs every listener in a plain forEach
+   * with no try/catch. An exception thrown here propagates out of E.emit
+   * inside Taxi's afterFetch Promise executor, which rejects that promise —
+   * so loadScripts(), renderer.enter() and NAVIGATE_END never run, and
+   * isTransitioning is never reset. Every later link click then dies
+   * silently. Guard each sync step individually so one bad block/link
+   * cannot take the rest of navigation down with it.
+   */
+  function safe(label, fn) {
+    try {
+      fn();
+    } catch (err) {
+      console.error('[proto-taxi]', label, err);
     }
   }
 
@@ -253,25 +304,25 @@
       ? payload.from.renderer.content
       : liveView();
 
-    killScrollTriggersIn(container);
+    safe('killScrollTriggersIn', function () {
+      killScrollTriggersIn(container);
+    });
 
-    if (window.protoLenis) {
-      window.protoLenis.scrollTo(0, { immediate: true });
-    } else {
-      window.scrollTo(0, 0);
-    }
-
-    dispatch('proto:page-leave', { container: container });
+    safe('proto:page-leave dispatch', function () {
+      dispatch('proto:page-leave', { container: container });
+    });
   });
 
   E.on('NAVIGATE_IN', function (payload) {
     if (!payload || !payload.to) return;
 
     var page = payload.to.page;
-    syncBodyClass(page);
-    syncHead(page);
-    syncAdminBar(page);
-    syncNavState(payload.to.finalUrl || window.location.href);
+    var url = payload.to.finalUrl || window.location.href;
+
+    safe('syncBodyClass', function () { syncBodyClass(page); });
+    safe('syncHead', function () { syncHead(page); });
+    safe('syncAdminBar', function () { syncAdminBar(page); });
+    safe('syncNavState', function () { syncNavState(url); });
   });
 
   E.on('NAVIGATE_END', function (payload) {
@@ -279,20 +330,24 @@
       ? payload.to.renderer.content
       : liveView();
 
-    focusView(container);
-    announce(document.title);
+    safe('focusView', function () { focusView(container); });
+    safe('announce', function () { announce(document.title); });
 
-    /* The new content changed the document height; both libraries cache it. */
-    if (window.protoLenis && typeof window.protoLenis.resize === 'function') {
-      window.protoLenis.resize();
-    }
-    if (window.ScrollTrigger) {
-      window.ScrollTrigger.refresh();
-    }
+    safe('resize', function () {
+      /* The new content changed the document height; both libraries cache it. */
+      if (window.protoLenis && typeof window.protoLenis.resize === 'function') {
+        window.protoLenis.resize();
+      }
+      if (window.ScrollTrigger) {
+        window.ScrollTrigger.refresh();
+      }
+    });
 
-    dispatch('proto:page-ready', {
-      container: container,
-      url: window.location.href
+    safe('proto:page-ready dispatch', function () {
+      dispatch('proto:page-ready', {
+        container: container,
+        url: window.location.href
+      });
     });
   });
 
