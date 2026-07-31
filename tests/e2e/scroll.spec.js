@@ -40,9 +40,10 @@ test('scroll resets to the top on navigation', async ({ page }) => {
   // assertion below would pass vacuously instead of proving a reset.
   expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(100)
   await navigate(page, '/taxi-test-a/')
-  await page.waitForTimeout(400)
-  const y = await page.evaluate(() => window.scrollY)
-  expect(y).toBeLessThan(20)
+  // Polled rather than slept on: navigate() already waits for the transition to
+  // settle, and Lenis applies the reset on its next rAF tick, so a fixed pause
+  // was standing in for a condition that can simply be waited on.
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeLessThan(20)
 })
 
 test('scroll resets to the top even when Lenis is stopped', async ({ page }) => {
@@ -66,9 +67,10 @@ test('scroll resets to the top even when Lenis is stopped', async ({ page }) => 
   await page.evaluate(() => window.protoLenis?.stop())
 
   await navigate(page, '/taxi-test-a/')
-  await page.waitForTimeout(400)
-  const y = await page.evaluate(() => window.scrollY)
-  expect(y).toBeLessThan(20)
+  // Polled rather than slept on: navigate() already waits for the transition to
+  // settle, and Lenis applies the reset on its next rAF tick, so a fixed pause
+  // was standing in for a condition that can simply be waited on.
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeLessThan(20)
 })
 
 test('scroll reset happens during the swap, not before the outgoing view fades', async ({ page }) => {

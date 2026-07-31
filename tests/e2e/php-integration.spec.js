@@ -99,10 +99,22 @@ add_filter('proto_taxi_ignore_urls', function ($urls) {
     })
     expect(marks).toEqual({ exact: true, decoy: false })
   } finally {
-    if (pageId) {
-      wpCli(['post', 'delete', pageId, '--force'])
+    // Each cleanup step is isolated: if deleting the page throws, the mu-plugin
+    // unlink must still run, or an inert-but-real filter file is orphaned in the
+    // live site's mu-plugins directory for every later run.
+    try {
+      if (pageId) {
+        wpCli(['post', 'delete', pageId, '--force'])
+      }
+    } catch (err) {
+      console.error('cleanup: failed to delete temporary page', pageId, err.message)
     }
-    fs.unlinkSync(muPluginPath)
+
+    try {
+      fs.unlinkSync(muPluginPath)
+    } catch (err) {
+      console.error('cleanup: failed to remove temporary mu-plugin', muPluginPath, err.message)
+    }
   }
 })
 
