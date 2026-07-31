@@ -1,0 +1,39 @@
+{
+    "$schema": "https://schemas.wp.org/trunk/block.json",
+    "apiVersion": 3,
+    "name": "proto-blocks/taxi-fixture-a",
+    "title": "Taxi Fixture A",
+    "description": "A Taxi Fixture A block.",
+    "category": "proto-blocks",
+    "icon": "block-default",
+    "keywords": [
+        "taxi-fixture-a"
+    ],
+    "supports": {
+        "html": false,
+        "anchor": true,
+        "customClassName": true,
+        "align": [
+            "wide",
+            "full"
+        ],
+        "color": {
+            "background": true,
+            "text": true
+        },
+        "spacing": {
+            "padding": true,
+            "margin": true
+        }
+    },
+    "protoBlocks": {
+        "version": "1.0",
+        "template": "template.php",
+        "fields": {
+            "heading": {
+                "type": "text",
+                "tagName": "h2"
+            }
+        }
+    }
+}

@@ -4,6 +4,7 @@
  */
 
 require_once get_stylesheet_directory() . '/inc/proto-required-plugins.php';
+require_once get_stylesheet_directory() . '/inc/proto-taxi.php';
 
 add_action('after_setup_theme', function () {
     // Navigation is managed via the block-editor Navigation block in the Site
@@ -64,14 +65,22 @@ add_action('wp_enqueue_scripts', function () {
         'scroll-trigger' => ['file' => 'ScrollTrigger.min.js', 'version' => '3.15.0', 'deps' => ['proto-gsap']],
         'lottie'         => ['file' => 'lottie_light.min.js',  'version' => '5.13.0', 'deps' => []],
         'lenis'          => ['file' => 'lenis.min.js',         'version' => '1.1.13', 'deps' => []],
+        'taxi-e'         => ['file' => 'e.umd.js',      'version' => '2.5.0',  'deps' => []],
+        'taxi'           => ['file' => 'taxi.umd.js',   'version' => '1.9.1',  'deps' => ['proto-taxi-e']],
         'init'           => ['file' => 'proto-init.js',        'version' => '1.0.0',  'deps' => ['proto-lenis']],
         'intro'          => ['file' => 'proto-intro.js',       'version' => '1.0.0',  'deps' => ['proto-init', 'proto-lottie']],
+        'taxi-init'      => ['file' => 'proto-taxi.js', 'version' => '1.0.0',  'deps' => ['proto-taxi', 'proto-init']],
     ];
+    if (!proto_taxi_is_enabled()) {
+        unset($libs['taxi-e'], $libs['taxi'], $libs['taxi-init']);
+    }
     foreach ($libs as $handle => $lib) {
         $path = $dir . '/' . $lib['file'];
         if (!file_exists($path)) { continue; }
         wp_enqueue_script('proto-' . $handle, $url . '/' . $lib['file'], $lib['deps'], $lib['version'] . '.' . filemtime($path), true);
     }
+    // Unwrap the @unseenco/e default export so window.E is the emitter directly.
+    wp_add_inline_script('proto-taxi-e', "if(window.E&&window.E.__esModule&&window.E.default){window.E=window.E.default}");
 });
 
 // Once-per-session intro overlay.

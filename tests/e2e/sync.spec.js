@@ -1,0 +1,114 @@
+const { test, expect } = require('@playwright/test')
+
+async function navigate(page, href) {
+  await page.evaluate((href) => {
+    const a = document.createElement('a')
+    a.href = href
+    a.id = 'proto-nav'
+    document.querySelector('[data-taxi-view] main').appendChild(a)
+  }, href)
+  // The probe anchor has no text content, so it has a zero-size bounding
+  // box and no clickable point: Playwright's pointer-based click (even with
+  // force: true) cannot target it. Dispatch the click in-page instead,
+  // which needs no bounding box. See tests/e2e/navigation.spec.js for the
+  // alternative (giving the anchor textContent) used by the other specs.
+  await page.evaluate(() => document.getElementById('proto-nav').click())
+  await page.waitForFunction((h) => location.pathname === h, href)
+  // The URL updates in beforeFetch, before the enter transition (and thus
+  // NAVIGATE_END) runs. Wait for Taxi to finish transitioning so
+  // NAVIGATE_END-driven effects (focus, proto:page-ready) have landed —
+  // same pattern as tests/e2e/navigation.spec.js.
+  await page.waitForFunction(
+    () => window.protoTaxi && window.protoTaxi.core.isTransitioning === false
+  )
+}
+
+test('body class is synced from the incoming document', async ({ page }) => {
+  await page.goto('/taxi-test-a/')
+  const before = await page.evaluate(() => document.body.className)
+  await navigate(page, '/taxi-test-b/')
+  const after = await page.evaluate(() => document.body.className)
+  expect(after).not.toBe(before)
+  expect(after).toMatch(/page-id-\d+/)
+})
+
+test('proto:page-ready fires on load and on every navigation', async ({ page }) => {
+  await page.addInitScript(() => {
+    window.__ready = []
+    document.addEventListener('proto:page-ready', (e) => {
+      window.__ready.push(e.detail.url)
+    })
+  })
+  await page.goto('/taxi-test-a/')
+  expect((await page.evaluate(() => window.__ready)).length).toBe(1)
+
+  await navigate(page, '/taxi-test-b/')
+  const urls = await page.evaluate(() => window.__ready)
+  expect(urls.length).toBe(2)
+  expect(urls[1]).toContain('/taxi-test-b/')
+})
+
+test('proto:page-leave fires with the outgoing container', async ({ page }) => {
+  await page.addInitScript(() => {
+    window.__left = 0
+    document.addEventListener('proto:page-leave', (e) => {
+      if (e.detail.container) window.__left++
+    })
+  })
+  await page.goto('/taxi-test-a/')
+  await navigate(page, '/taxi-test-b/')
+  expect(await page.evaluate(() => window.__left)).toBe(1)
+})
+
+test('canonical link is synced', async ({ page }) => {
+  await page.goto('/taxi-test-a/')
+  await navigate(page, '/taxi-test-b/')
+  const canonical = await page.evaluate(() =>
+    document.querySelector('link[rel="canonical"]')?.href || '')
+  test.skip(canonical === '', 'no canonical tag rendered (SEO plugin inactive)')
+  expect(canonical).toContain('/taxi-test-b/')
+})
+
+test('focus moves to the new view after navigation', async ({ page }) => {
+  await page.goto('/taxi-test-a/')
+  await navigate(page, '/taxi-test-b/')
+  const focused = await page.evaluate(() =>
+    document.activeElement?.hasAttribute('data-taxi-view'))
+  expect(focused).toBe(true)
+})
+
+test('announcer live region exists before any navigation', async ({ page }) => {
+  await page.goto('/taxi-test-a/')
+  // Deliberately do not navigate: the pre-fix behaviour created
+  // .proto-taxi-announcer lazily inside announce(), on the first
+  // NAVIGATE_END, so it would not exist yet on a freshly loaded page.
+  // Calling navigate() here would make this pass under that old lazy
+  // behaviour too and defeat the point of the test.
+  const announcer = await page.evaluate(() => {
+    const el = document.querySelector('.proto-taxi-announcer')
+    return el && {
+      ariaLive: el.getAttribute('aria-live'),
+      ariaAtomic: el.getAttribute('aria-atomic')
+    }
+  })
+  expect(announcer).toEqual({ ariaLive: 'polite', ariaAtomic: 'true' })
+})
+
+test('nav active state is synced on navigation', async ({ page }) => {
+  await page.goto('/taxi-test-a/')
+  await navigate(page, '/taxi-test-b/')
+
+  const state = await page.evaluate(() => {
+    function info(slug) {
+      const link = document.querySelector(`.wp-block-navigation a[href$="/${slug}/"]`)
+      return link && {
+        current: link.classList.contains('current-menu-item'),
+        ariaCurrent: link.getAttribute('aria-current')
+      }
+    }
+    return { a: info('taxi-test-a'), b: info('taxi-test-b') }
+  })
+
+  expect(state.a).toEqual({ current: false, ariaCurrent: null })
+  expect(state.b).toEqual({ current: true, ariaCurrent: 'page' })
+})

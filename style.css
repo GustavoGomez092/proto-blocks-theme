@@ -35,16 +35,33 @@ body {
   flex-direction: column;
   min-height: 100vh;
 }
+
+/* The Taxi wrapper sits between .wp-site-blocks and <main>. It stretches like
+   <main> used to, and stacks its children in one grid cell so the outgoing and
+   incoming views overlap during a transition instead of stacking vertically. */
+.wp-site-blocks > [data-taxi] {
+  display: grid;
+  grid-template-areas: "proto-taxi-view";
+  flex: 1 0 auto;
+  min-width: 0;
+}
+.wp-site-blocks > [data-taxi] > [data-taxi-view] {
+  grid-area: proto-taxi-view;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
 .wp-site-blocks > header,
-.wp-site-blocks > main,
-.wp-site-blocks > footer {
+.wp-site-blocks > footer,
+.wp-site-blocks main {
   box-sizing: border-box;        /* keep padding inside the 1440 / 100% width */
   width: 100%;
   max-width: 1440px;
   margin-inline: auto;
   padding-inline: clamp(1rem, 4vw, 2.5rem); /* default side gutters */
 }
-.wp-site-blocks > main {
+.wp-site-blocks main {
   flex: 1 0 auto; /* take the leftover height */
 }
 
@@ -85,3 +102,18 @@ html.proto-intro-active { overflow: hidden; }
 .proto-blocks-scope ol.wp-block-list { list-style: decimal; }
 .proto-blocks-scope ul.wp-block-list { list-style: disc; }
 .is-layout-flow > .wp-block-spacer { margin-block-start: 0; margin-block-end: 0; }
+
+/* Visually hidden live region announcing Taxi navigations. */
+.proto-taxi-announcer {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+[data-taxi-view]:focus { outline: none; }

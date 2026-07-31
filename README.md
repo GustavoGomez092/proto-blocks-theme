@@ -44,6 +44,219 @@ If you want to disable the builder canvas for a specific page, open the page, go
 
 ---
 
+## Page Transitions (Taxi.js)
+
+Proto-theme ships [Taxi.js](https://taxi.js.org/) 1.9.1 (with its `@unseenco/e`
+2.5.0 event-emitter dependency), vendored as UMD builds so the theme stays
+build-free. Same-origin links swap the page's `<main>` in place; the header,
+footer, Lenis scroll instance and intro overlay persist. The default
+transition is a GSAP fade, and `prefers-reduced-motion: reduce` makes it an
+instant swap.
+
+### Markup requirement
+
+Every front-end template must wrap its `<main>` group:
+
+```html
+<div data-taxi>
+  <div data-taxi-view>
+    <!-- wp:group {"tagName":"main", …} --> … <!-- /wp:group -->
+  </div>
+</div>
+```
+
+Header and footer template parts stay **outside** the wrapper. `templates/index.html`,
+`templates/page.html` and `templates/single.html` already do this. If the
+wrapper is missing, transitions are disabled and a warning is logged to the
+console.
+
+### Writing blocks that survive a swap
+
+A block's `view.js` is re-executed automatically on every navigation — the
+theme stamps `data-taxi-reload` onto any enqueued `<script>` tag whose handle
+starts with `proto-blocks-` (Proto-Blocks' per-block script prefix), and
+Taxi's default `reloadJsFilter` re-runs any script tagged that way. Plain
+IIFE blocks need no changes.
+
+Two cases need the lifecycle event instead:
+
+- Blocks declaring `viewScriptModule` in `block.json`. These are registered
+  through WordPress's Script Modules API rather than `wp_enqueue_script()`, so
+  they're printed outside the `script_loader_tag` filter entirely — the theme
+  never gets a chance to tag them — and even if it could, an ES module only
+  evaluates once per resolved URL, so re-appending the tag would not re-run
+  it anyway. **This is not just a Proto-Blocks concern**: it's a general
+  WordPress limitation that also affects *core* blocks. WordPress's own
+  Interactivity API (`@wordpress/block-library/navigation/view-js-module`,
+  and plugins that hook into it — e.g. WooCommerce's `customer-account.js`)
+  ships as `type="module"` and hydrates `data-wp-interactive` regions once
+  at load, with no observer for DOM inserted later by a Taxi swap. Core
+  blocks that depend on it — the image lightbox, the query loop's enhanced
+  pagination, the file block — go inert inside `<main>` after a client-side
+  navigation. There is no `data-taxi-reload`-style fix for these; if a page
+  needs one of them, either add it to `proto_taxi_ignore_urls` (full page
+  loads that route) or accept the degradation.
+- Code that must react to a navigation without owning a block script.
+
+```js
+document.addEventListener('proto:page-ready', (e) => {
+  // fires on initial load AND after every navigation
+  init(e.detail.container) // the [data-taxi-view] element
+  // e.detail.url is also available (the new page's URL)
+})
+
+document.addEventListener('proto:page-leave', (e) => {
+  teardown(e.detail.container) // only { container } is provided here
+})
+```
+
+### Custom transitions
+
+```js
+window.protoTaxi.addTransition('slide', class extends window.protoTaxi.Transition {
+  onLeave({ from, done }) { /* animate out, then */ done() }
+  onEnter({ to, done })   { /* animate in, then */  done() }
+})
+```
+
+```html
+<a href="/about" data-transition="slide">About</a>
+```
+
+`window.protoTaxi` exposes:
+
+| Property | What it is |
+|---|---|
+| `core` | The Taxi `Core` instance — `navigateTo()`, `preload()`, `addRoute()`, cache control |
+| `Transition` | Alias for `window.taxi.Transition`, the base class custom transitions extend |
+| `addTransition(name, TransitionClass)` | Registers a transition usable via `<a data-transition="name">` |
+
+### Which links are intercepted
+
+Same-origin links, excluding: links inside the admin bar (`#wpadminbar`), links
+to `/wp-admin` or `wp-login`, `mailto:` and `tel:` links, `[download]` links,
+hash-only links (`href="#…"`), `[target]` links, `[data-taxi-ignore]` links,
+and the two WooCommerce add-to-cart triggers (`.add_to_cart_button` and
+`.wc-block-components-product-button a`). Links to the WooCommerce cart,
+checkout and my-account pages are marked `data-taxi-ignore` server-side.
+Forms always submit with a full page load — Taxi only intercepts `<a>` clicks.
+
+### Routes this integration doesn't cover
+
+The `[data-taxi]` / `[data-taxi-view]` wrapper only exists because this
+theme's own templates (`templates/index.html`, `templates/page.html`,
+`templates/single.html`) put it there. Any route rendered by a **plugin-
+supplied** block template never gets it — WooCommerce, for example, ships
+its own `archive-product`, `single-product` and `taxonomy-product_cat`
+templates, so `/shop/` and every product page have zero `[data-taxi-view]`
+elements. Clicking into one still works — Taxi's `createCacheEntry` throws
+on the missing wrapper, the `.catch` falls through to a real
+`window.location` navigation — but it wastes a full WordPress render on
+every click, and, because `enablePrefetch` defaults to `true`, on every
+hover/focus too (`preload()`'s catch logs a console warning each time).
+
+If a fork adds a plugin whose templates aren't wrapped, either:
+
+- add the wrapper to that plugin's templates (override them in the theme), or
+- add the route's URL(s) to `proto_taxi_ignore_urls` so links to it stay full
+  page loads and skip the wasted prefetch/click round-trip.
+
+The WooCommerce shop page is handled in code already — `wc_get_page_id('shop')`
+is included in the theme's `proto_taxi_ignore_urls` default alongside cart,
+checkout and my-account, since it's the one plugin-supplied route linked from
+the default navigation. Other WooCommerce routes (individual products,
+product categories) are not — add them via the filter if needed.
+
+### Known behaviour: Back/Forward during a transition
+
+The fade transition takes ~0.9s (0.4s out, 0.5s in). If the user presses
+Back or Forward **while one is still running**, Taxi does not queue or
+interrupt it — `allowInterruption` is `false` — it silently restores the
+previous history entry, logs `A transition is currently in progress` to the
+console, and the popstate navigation is dropped. This is stock Taxi
+behaviour, not a bug in this integration.
+
+To shrink the window, shorten the tween durations in the `ProtoFade`
+transition in `scripts/proto-taxi.js` — 0.25s out and 0.3s in roughly halves
+it and reads as snappier anyway.
+
+**Do not reach for Taxi's `allowInterruption: true` to solve this.** The
+synchronisation layer in `scripts/proto-taxi.js` assumes one navigation at a
+time. With interruption enabled two navigations overlap, each emitting its own
+`NAVIGATE_IN`, and the order is decided by which fetch finishes first rather
+than which link was clicked first. The visible content comes from whichever
+renderer updated last; the head tags come from whichever `NAVIGATE_IN` emitted
+last. Those can disagree, leaving the document advertising one page's
+`canonical` and `og:url` while displaying another — wrong for crawlers, share
+sheets and analytics, and with nothing visibly broken on screen to reveal it.
+The announcer would also read the wrong title. Making the option safe requires
+threading a per-navigation token through `syncBodyClass`, `syncHead`,
+`syncNavState` and `syncAdminBar` so each can check whether it still belongs to
+the current navigation before touching the document.
+
+### PHP filters
+
+| Filter | Purpose |
+|---|---|
+| `proto_taxi_enabled` | Master switch. `add_filter('proto_taxi_enabled', '__return_false');`. Always `false` in `wp-admin` and on JSON requests, regardless of the filter. |
+| `proto_taxi_reload_handles` | Extra script handles (beyond the `proto-blocks-` prefix) to mark `data-taxi-reload`. Empty by default. |
+| `proto_taxi_denied_handles` | Handles that must never be re-run. Defaults to the theme's own animation/runtime scripts (`proto-gsap`, `proto-split-text`, `proto-scroll-trigger`, `proto-lottie`, `proto-lenis`, `proto-taxi-e`, `proto-taxi`, `proto-taxi-init`, `proto-init`, `proto-intro`) — re-running any of these would create a second Lenis instance, RAF loop or Taxi Core. The deny list wins over the `proto-blocks-` prefix. |
+| `proto_taxi_ignore_urls` | Extra URLs whose links get `data-taxi-ignore`. Defaults to the WooCommerce cart/checkout/my-account/shop permalinks when WooCommerce is active, otherwise empty. See "Routes this integration doesn't cover" above for why `shop` is included. |
+
+### Upgrading Taxi
+
+`taxi.umd.js` externalizes its dependency and reads `window.E` at runtime,
+which `e.umd.js` provides — the two must always be upgraded together. Run
+this from a scratch directory (not inside the theme):
+
+```bash
+npm pack @unseenco/taxi@<version> @unseenco/e@<version>
+
+mkdir -p taxi-upgrade e-upgrade
+tar -xzf unseenco-taxi-<version>.tgz -C taxi-upgrade --strip-components=1
+tar -xzf unseenco-e-<version>.tgz -C e-upgrade --strip-components=1
+
+# copy only the UMD builds — never the .map files, which reference sources
+# the theme doesn't ship and would leave broken sourcemap references
+cp taxi-upgrade/dist/taxi.umd.js e-upgrade/dist/e.umd.js /path/to/proto-theme/scripts/
+
+rm -rf unseenco-taxi-<version>.tgz unseenco-e-<version>.tgz taxi-upgrade e-upgrade
+```
+
+`npm pack` only writes `.tgz` tarballs to the current directory — it does not
+extract them, so the `tar` step above is required before there is a `dist/`
+to copy from. Vendored files must stay byte-identical to the npm package's
+`dist/` originals; do not hand-edit them.
+
+Then bump the two `version` values in the `$libs` map in `functions.php`
+(the `taxi-e` and `taxi` entries) to match, and keep the `'taxi' => [...,
+'deps' => ['proto-taxi-e']]` dependency in place so `e.umd.js` always loads
+first.
+
+### Running the E2E suite
+
+**Prerequisite:** the site must use pretty permalinks (Settings → Permalinks
+→ "Post name", i.e. `/%postname%/`), not "Plain". Under plain permalinks
+every page resolves to a `/?page_id=…` (or `/?p=…`) URL whose path is just
+`/`, and `proto_taxi_mark_ignored_links()` in `inc/proto-taxi.php`
+deliberately skips a bare `/` (it would otherwise substring-match every
+internal href on the site) — so the ignore-URL marking it tests never fires.
+Several assertions in `tests/e2e/php-integration.spec.js` depend on real
+paths being present.
+
+```bash
+npm install && npx playwright install chromium
+./tests/fixtures/setup.sh          # creates /taxi-test-a/ and /taxi-test-b/
+npm test
+```
+
+Point at another site with `PROTO_BASE_URL=https://example.test npm test`.
+The `tests/`, `playwright.config.js`, `package.json` and `package-lock.json`
+paths are all `export-ignore`d — none of this ships in the release zip built
+by `git archive`.
+
+---
+
 ## Scaffolding a Block
 
 All custom blocks live in `proto-blocks/`. Each block is a folder containing at minimum a `block.json` and a `template.php`. Proto-Blocks discovers all folders in this directory automatically — no registration code needed.

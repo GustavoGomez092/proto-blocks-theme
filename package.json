@@ -1,0 +1,13 @@
+{
+  "name": "proto-theme-dev",
+  "private": true,
+  "description": "Development tooling for Proto-theme. Not shipped in the theme zip.",
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "fixtures": "./tests/fixtures/setup.sh"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0"
+  }
+}
