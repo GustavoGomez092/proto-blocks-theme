@@ -183,12 +183,13 @@ window.protoTaxi.addTransition('slide', class extends window.taxi.Transition {
 
 ```
 a[href]:not([target]):not([href^="#"]):not([data-taxi-ignore]):not([download])
-  :not([href*="/wp-admin"]):not([href*="wp-login"]):not(#wpadminbar a)
+  :not([href*="/wp-admin"]):not([href*="wp-login"])
+  :not([href^="mailto:"]):not([href^="tel:"]):not(#wpadminbar a)
   :not(.add_to_cart_button):not(.wc-block-components-product-button a)
 ```
 
-In addition, `inc/proto-taxi.php` marks links to the WooCommerce cart, checkout
-and my-account pages with `data-taxi-ignore`, resolved through:
+In addition, `inc/proto-taxi.php` marks links to the WooCommerce cart, checkout,
+my-account and shop pages with `data-taxi-ignore`, resolved through:
 
 ```php
 add_filter('proto_taxi_ignore_urls', fn($urls) => [...$urls, home_url('/booking')]);
@@ -257,7 +258,11 @@ scripts/proto-taxi.js    boot, config, fade transition, lifecycle sync, public A
 inc/proto-taxi.php       enable filter, script marking, Woo/ignore-URL marking
 playwright.config.js     dev only, export-ignore
 package.json             devDependencies only, export-ignore
-tests/e2e/taxi.spec.js   dev only, export-ignore
+tests/e2e/*.spec.js      dev only, export-ignore (one spec file per concern:
+                         fixtures, taxi-boot, markup, php-integration,
+                         navigation, script-reload, sync, scroll, exclusions,
+                         resilience, admin-bar)
+tests/fixtures/setup.sh  dev only, export-ignore
 ```
 
 **Modified**

@@ -15,7 +15,12 @@ test('wp-admin links do a full page load', async ({ page }) => {
   await page.goto('/taxi-test-a/')
   await page.evaluate(() => { window.__sentinel = 'alive' })
   await addLink(page, '/wp-admin/', 'to-admin')
-  await Promise.all([page.waitForLoadState('load'), page.click('#to-admin')])
+  // waitForURL, not waitForLoadState('load'): the current document has already
+  // reached 'load' from the goto above, so waitForLoadState resolves immediately
+  // and arms nothing. That leaves the sentinel check racing a slow
+  // /wp-admin -> wp-login redirect.
+  await page.click('#to-admin')
+  await page.waitForURL(/wp-(admin|login)/)
   expect(await page.evaluate(() => window.__sentinel)).toBeUndefined()
 })
 
@@ -23,7 +28,10 @@ test('data-taxi-ignore links do a full page load', async ({ page }) => {
   await page.goto('/taxi-test-a/')
   await page.evaluate(() => { window.__sentinel = 'alive' })
   await addLink(page, '/taxi-test-b/', 'to-b-ignored', { 'data-taxi-ignore': '' })
-  await Promise.all([page.waitForLoadState('load'), page.click('#to-b-ignored')])
+  // See the note above: wait for the actual navigation, not for a load state the
+  // current document already satisfies.
+  await page.click('#to-b-ignored')
+  await page.waitForURL('**/taxi-test-b/')
   expect(await page.evaluate(() => window.__sentinel)).toBeUndefined()
 })
 
