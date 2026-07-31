@@ -80,7 +80,6 @@
       }
       window.gsap.to(el, {
         opacity: 0,
-        y: -20,
         duration: 0.4,
         ease: 'power2.inOut',
         onComplete: props.done
@@ -97,8 +96,8 @@
       }
       window.gsap.fromTo(
         el,
-        { opacity: 0, y: 20 },
-        { opacity: 1, y: 0, duration: 0.5, ease: 'power2.out', onComplete: props.done }
+        { opacity: 0 },
+        { opacity: 1, duration: 0.5, ease: 'power2.out', onComplete: props.done }
       );
     }
   };
