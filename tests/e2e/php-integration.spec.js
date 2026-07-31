@@ -125,7 +125,11 @@ test('script_loader_tag only marks the tag carrying src, not inline/translation 
   const php = `
     $tag = '<script type="text/javascript" id="proto-blocks-test-handle-js-before">/* inline before */</script>' . "\\n" .
         '<script src="https://example.test/view.js" id="proto-blocks-test-handle-js"></script>' . "\\n";
-    $result = apply_filters('script_loader_tag', $tag, 'proto-blocks-test-handle');
+    // Core always fires this filter with three arguments (tag, handle, src).
+    // Passing only two makes any plugin callback that declares $src as required
+    // fatal with ArgumentCountError -- Wordfence Login Security's
+    // _tagVueScriptAsModule() is one, and it is among the plugins TGMPA installs.
+    $result = apply_filters('script_loader_tag', $tag, 'proto-blocks-test-handle', 'https://example.test/view.js');
     echo json_encode(['result' => $result, 'count' => substr_count($result, 'data-taxi-reload')]);
   `
   const output = execFileSync('wp', ['eval', php, '--path=' + WP_PATH], { encoding: 'utf8' })
