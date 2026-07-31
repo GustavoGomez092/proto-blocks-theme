@@ -59,7 +59,13 @@ function proto_taxi_ignore_urls(): array
     $urls = [];
 
     if (function_exists('wc_get_page_id')) {
-        foreach (['cart', 'checkout', 'myaccount'] as $page) {
+        // 'shop' renders through WooCommerce's own archive-product block
+        // template, which this theme never wraps in [data-taxi-view] (see
+        // the README's Page Transitions section) — it has no wrapper for
+        // Taxi to swap, so its links must stay full page loads. It's also
+        // the one plugin-supplied route linked from the default navigation,
+        // which is why it's handled here instead of only documented.
+        foreach (['cart', 'checkout', 'myaccount', 'shop'] as $page) {
             $id = wc_get_page_id($page);
             if ($id && $id > 0) {
                 $urls[] = get_permalink($id);
@@ -119,7 +125,7 @@ add_filter('render_block', function ($content, $block) {
 
 function proto_taxi_mark_ignored_links($content)
 {
-    if (!proto_taxi_is_enabled() || !is_string($content) || $content === '' || !str_contains($content, '<a ')) {
+    if (!proto_taxi_is_enabled() || !is_string($content) || $content === '' || !str_contains($content, '<a')) {
         return $content;
     }
 
