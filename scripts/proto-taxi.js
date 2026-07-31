@@ -88,7 +88,7 @@
     }
 
     onEnter(props) {
-      resetScroll();
+      safe('resetScroll', resetScroll);
 
       var el = animTarget(props.to);
       if (reduced.matches || !window.gsap || !el) {
@@ -196,11 +196,19 @@
    * Compares origin as well as pathname: an external link (e.g. a footer
    * link to a sister site) whose path happens to match the current page's
    * path must not be marked current. `link.href` is a browser-resolved
-   * absolute URL for a plain <a>, so `new URL()` on it normally cannot
-   * throw — except an SVG <a> element's `.href` is an SVGAnimatedString,
-   * not a string, which makes `new URL()` throw "Invalid URL". That's
-   * handled by the `safe()` wrapper around this function's caller, not
-   * here — see the NAVIGATE_IN handler below.
+   * absolute URL for a plain <a>. An SVG <a> element's `.href` is an
+   * SVGAnimatedString rather than a string, but `new URL()` still accepts
+   * it — it gets coerced to a string and resolves fine against this page's
+   * https: origin (it only throws "Invalid URL" against an opaque base
+   * like about:blank, which this function never uses) — so that is not a
+   * throw risk here. This function is still wrapped in `safe()` at its
+   * caller (see the NAVIGATE_IN handler below) as defense-in-depth, same
+   * as every other sync step in this file — not because of a known bug in
+   * this particular function. (For a real, verified example of the kind of
+   * failure `safe()` guards against, see killScrollTriggersIn() below: a
+   * ScrollTrigger whose trigger selector matched nothing leaves a bare
+   * string where an Element is expected, and container.contains() on it
+   * throws a TypeError.)
    */
   function syncNavState(url) {
     var target = new URL(url, window.location.href);
