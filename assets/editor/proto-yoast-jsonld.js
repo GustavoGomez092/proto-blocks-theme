@@ -30,8 +30,6 @@
 	var useSelect = data.useSelect;
 	var useDispatch = data.useDispatch;
 	var Fill = components.Fill;
-	var Button = components.Button;
-	var TextareaControl = components.TextareaControl;
 	var __ = i18n.__;
 	var _n = i18n._n;
 	var sprintf = i18n.sprintf;
@@ -138,7 +136,14 @@
 				className: 'proto-jsonld__status is-' + info.state,
 				role: 'status',
 				'aria-live': 'polite',
-				style: { margin: '8px 0', color: COLORS[ info.state ], fontWeight: info.state === 'empty' ? 400 : 600 },
+				style: {
+					flex: '1 1 20em', // Wraps the Format button below it in the narrow sidebar.
+					margin: 0,
+					color: COLORS[ info.state ],
+					fontWeight: info.state === 'empty' ? 400 : 600,
+					lineHeight: 1.5,
+					overflowWrap: 'anywhere',
+				},
 			},
 			text
 		);
@@ -147,14 +152,21 @@
 	/**
 	 * The row's body — shared by the metabox and sidebar rows. Both read the
 	 * same edited meta, so they stay in sync.
+	 *
+	 * Markup mirrors Yoast's own field rows (e.g. "Advanced"): a
+	 * `.yoast-field-group` with a `__title` label, `field-group-description`
+	 * help text and a `.yoast-field-group__textarea`, so spacing, borders and
+	 * type come from Yoast's stylesheet and match the native rows. The
+	 * collapsible already supplies the horizontal padding.
 	 */
-	function JsonLdEditor() {
+	function JsonLdEditor( props ) {
 		var raw = useSelect( function ( select ) {
 			var meta = select( 'core/editor' ).getEditedPostAttribute( 'meta' ) || {};
 			return typeof meta[ META_KEY ] === 'string' ? meta[ META_KEY ] : '';
 		}, [] );
 		var editPost = useDispatch( 'core/editor' ).editPost;
 		var info = useMemo( function () { return analyse( raw ); }, [ raw ] );
+		var inputId = 'proto-jsonld-input-' + props.location;
 
 		function setRaw( next ) {
 			var meta = {};
@@ -168,32 +180,51 @@
 
 		return el(
 			'div',
-			{ className: 'proto-jsonld' },
-			el( 'p', { style: { marginTop: 0 } },
-				__( 'Accepts a single node object, an array of nodes, or an object with "@graph" ("@context" is optional and removed).', 'proto-theme' )
-			),
-			el( 'p', null,
-				__( 'Nodes that describe this page (a WebPage type such as FAQPage, or "@id": "#webpage") merge into Yoast\'s WebPage; every other node is appended to Yoast\'s graph, with "#…" ids resolved against this page\'s URL.', 'proto-theme' )
-			),
-			el( TextareaControl, {
-				label: __( 'JSON-LD code', 'proto-theme' ),
-				value: raw,
-				onChange: setRaw,
-				rows: 12,
-				spellCheck: false,
-				autoComplete: 'off',
-				placeholder: '{\n  "@type": "FAQPage",\n  "mainEntity": [ { "@id": "#q1" } ]\n}',
-				className: 'proto-jsonld__textarea',
-				style: { fontFamily: 'Menlo, Consolas, Monaco, "Liberation Mono", monospace', fontSize: '12px', lineHeight: 1.5, width: '100%' },
-				__nextHasNoMarginBottom: true,
-			} ),
-			el( StatusLine, { info: info } ),
-			el( Button, {
-				variant: 'secondary',
-				onClick: format,
-				disabled: info.state !== 'valid',
-				className: 'proto-jsonld__format',
-			}, __( 'Format', 'proto-theme' ) )
+			{ className: 'yoast proto-jsonld' },
+			el(
+				'div',
+				{ className: 'yoast-field-group' },
+				el( 'div', { className: 'yoast-field-group__title' },
+					el( 'label', { htmlFor: inputId }, __( 'JSON-LD code', 'proto-theme' ) )
+				),
+				el( 'p', { className: 'field-group-description' },
+					__( 'Accepts a single node object, an array of nodes, or an object with "@graph" ("@context" is optional and removed).', 'proto-theme' )
+				),
+				el( 'p', { className: 'field-group-description' },
+					__( 'Nodes that describe this page (a WebPage type such as FAQPage, or "@id": "#webpage") merge into Yoast\'s WebPage; every other node is appended to Yoast\'s graph, with "#…" ids resolved against this page\'s URL.', 'proto-theme' )
+				),
+				el( 'textarea', {
+					id: inputId,
+					className: 'yoast-field-group__textarea proto-jsonld__textarea',
+					value: raw,
+					onChange: function ( event ) { setRaw( event.target.value ); },
+					rows: 12,
+					spellCheck: false,
+					autoComplete: 'off',
+					placeholder: '{\n  "@type": "FAQPage",\n  "mainEntity": [ { "@id": "#q1" } ]\n}',
+					style: {
+						display: 'block',
+						fontFamily: 'Menlo, Consolas, Monaco, "Liberation Mono", monospace',
+						fontSize: '12px',
+						lineHeight: 1.5,
+						resize: 'vertical',
+					},
+				} ),
+				el(
+					'div',
+					{
+						className: 'proto-jsonld__footer',
+						style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px 16px', marginTop: '8px' },
+					},
+					el( StatusLine, { info: info } ),
+					el( 'button', {
+						type: 'button',
+						className: 'yoast-button yoast-button--secondary proto-jsonld__format',
+						onClick: format,
+						disabled: info.state !== 'valid',
+					}, __( 'Format', 'proto-theme' ) )
+				)
+			)
 		);
 	}
 
@@ -226,7 +257,7 @@
 				{ name: 'YoastMetabox' },
 				el( Item, { key: 'proto-jsonld', renderPriority: METABOX_PRIORITY },
 					el( yoast.MetaboxCollapsible, { id: 'proto-jsonld-metabox', title: title },
-						el( JsonLdEditor )
+						el( JsonLdEditor, { location: 'metabox' } )
 					)
 				)
 			),
@@ -235,7 +266,7 @@
 				{ name: 'YoastSidebar' },
 				el( Item, { key: 'proto-jsonld', renderPriority: SIDEBAR_PRIORITY },
 					el( yoast.SidebarCollapsible, { id: 'proto-jsonld-sidebar', title: title },
-						el( JsonLdEditor )
+						el( JsonLdEditor, { location: 'sidebar' } )
 					)
 				)
 			)
