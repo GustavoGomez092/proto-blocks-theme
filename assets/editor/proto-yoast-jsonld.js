@@ -8,8 +8,13 @@
  * collapsible "JSON-LD" row to each, built from Yoast's own public
  * components (window.yoast.editorModules.components) so it looks native.
  *
- * The textarea edits the `_proto_jsonld` post meta (registered in
- * inc/proto-yoast-jsonld.php) and is saved with the normal Update button.
+ * The code field is core's CodeMirror (`wp.codeEditor`, configured in
+ * inc/proto-yoast-jsonld.php): line numbers, JSON-LD highlighting, bracket
+ * matching, auto-indent and core's jsonlint gutter. If the user disabled
+ * syntax highlighting in their profile it falls back to a plain textarea.
+ * Either way it edits the `_proto_jsonld` post meta, which is saved with the
+ * normal Update button.
+ *
  * Plain script, no build step: wp.element.createElement only.
  */
 ( function () {
@@ -27,6 +32,9 @@
 	var el = element.createElement;
 	var Fragment = element.Fragment;
 	var useMemo = element.useMemo;
+	var useRef = element.useRef;
+	var useState = element.useState;
+	var useEffect = element.useEffect;
 	var useSelect = data.useSelect;
 	var useDispatch = data.useDispatch;
 	var Fill = components.Fill;
@@ -34,7 +42,15 @@
 	var _n = i18n._n;
 	var sprintf = i18n.sprintf;
 
-	var META_KEY = ( window.protoYoastJsonLd && window.protoYoastJsonLd.metaKey ) || '_proto_jsonld';
+	var CONFIG = window.protoYoastJsonLd || {};
+	var META_KEY = CONFIG.metaKey || '_proto_jsonld';
+
+	// Core code-editor settings, or null → plain textarea fallback.
+	var CODE_EDITOR = CONFIG.codeEditor && wp.codeEditor && wp.codeEditor.initialize ? CONFIG.codeEditor : null;
+
+	// Editor → post meta sync is debounced; it is also flushed on blur, so
+	// clicking Update (which blurs the editor first) never saves stale text.
+	var SYNC_DELAY = 200;
 
 	// Yoast's own rows end at "Insights": priority 52 in the metabox, 32 in
 	// the sidebar. Sit right after them.
@@ -42,6 +58,8 @@
 	var SIDEBAR_PRIORITY = 40;
 
 	var COLORS = { valid: '#007017', invalid: '#cc1818', empty: '#757575' };
+
+	var FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 	/**
 	 * Yoast's public editor components (from the `yoast-seo-editor-modules`
@@ -56,14 +74,73 @@
 		return !! value && typeof value === 'object' && ! Array.isArray( value );
 	}
 
+	/* ------------------------------------------------------------------ *
+	 * Parse-error location. Browsers word JSON.parse errors differently  *
+	 * (V8: "at position N", Firefox: "at line L column C", Safari: none), *
+	 * so the line/column is computed here from whatever is available.    *
+	 * ------------------------------------------------------------------ */
+
+	function offsetToLocation( text, offset ) {
+		var lines = text.slice( 0, offset ).split( '\n' );
+		return { line: lines.length, column: lines[ lines.length - 1 ].length + 1, offset: offset };
+	}
+
+	function locationToOffset( text, line, column ) {
+		var lines = text.split( '\n' );
+		var offset = 0;
+		for ( var i = 0; i < line - 1 && i < lines.length; i++ ) {
+			offset += lines[ i ].length + 1;
+		}
+		return Math.min( offset + Math.max( column - 1, 0 ), text.length );
+	}
+
+	function locateError( raw, message ) {
+		var m = /position (\d+)/.exec( message );
+		if ( m ) {
+			return offsetToLocation( raw, Math.min( parseInt( m[ 1 ], 10 ), raw.length ) );
+		}
+		m = /line (\d+) column (\d+)/.exec( message );
+		if ( m ) {
+			var line = parseInt( m[ 1 ], 10 );
+			var column = parseInt( m[ 2 ], 10 );
+			return { line: line, column: column, offset: locationToOffset( raw, line, column ) };
+		}
+		if ( /end of (JSON )?(input|data)/i.test( message ) ) {
+			return offsetToLocation( raw, raw.replace( /\s+$/, '' ).length );
+		}
+		// Last resort: core's jsonlint (loaded with the code editor).
+		if ( window.jsonlint && window.jsonlint.parse ) {
+			try {
+				window.jsonlint.parse( raw );
+			} catch ( e ) {
+				m = /line (\d+)/.exec( e.message );
+				if ( m ) {
+					var l = parseInt( m[ 1 ], 10 );
+					return { line: l, column: 1, offset: locationToOffset( raw, l, 1 ) };
+				}
+			}
+		}
+		return null;
+	}
+
+	/** Strip engine-specific prefixes/suffixes; the location is shown separately. */
+	function cleanMessage( message ) {
+		return String( message )
+			.replace( /^JSON\.parse:\s*/, '' )
+			.replace( /^JSON Parse error:\s*/, '' )
+			.replace( /\s+in JSON at position \d+.*$/, '' )
+			.replace( /\s+at line \d+ column \d+ of the JSON data$/, '' )
+			.replace( /\.\s*$/, '' );
+	}
+
 	/**
 	 * Mirror of proto_jsonld_parse() in PHP: validate the JSON and the shape,
 	 * and list the nodes that would be output.
 	 *
-	 * @return {{state: string, error: string, types: string[], skipped: number}}
+	 * @return {{state: string, error: string, location: ?Object, types: string[], skipped: number}}
 	 */
 	function analyse( raw ) {
-		var result = { state: 'empty', error: '', types: [], skipped: 0 };
+		var result = { state: 'empty', error: '', location: null, types: [], skipped: 0 };
 		if ( ! raw || ! raw.trim() ) { return result; }
 
 		var parsed;
@@ -71,7 +148,8 @@
 			parsed = JSON.parse( raw );
 		} catch ( e ) {
 			result.state = 'invalid';
-			result.error = e.message;
+			result.error = cleanMessage( e.message );
+			result.location = locateError( raw, e.message );
 			return result;
 		}
 
@@ -84,7 +162,7 @@
 			nodes = [ parsed ];
 		} else {
 			result.state = 'invalid';
-			result.error = __( 'Expected an object, an array of objects, or an object with @graph.', 'proto-theme' );
+			result.error = __( 'Expected an object, an array of objects, or an object with @graph', 'proto-theme' );
 			return result;
 		}
 
@@ -102,27 +180,69 @@
 		return result;
 	}
 
+	/** Move keyboard focus to the next/previous focusable element after `node`. */
+	function focusSibling( node, forward ) {
+		var all = Array.prototype.filter.call( document.querySelectorAll( FOCUSABLE ), function ( candidate ) {
+			return candidate.offsetParent !== null && ! node.contains( candidate );
+		} );
+		var target = null;
+		all.forEach( function ( candidate ) {
+			// eslint-disable-next-line no-bitwise
+			var after = node.compareDocumentPosition( candidate ) & Node.DOCUMENT_POSITION_FOLLOWING;
+			if ( forward && after && ! target ) { target = candidate; }
+			if ( ! forward && ! after ) { target = candidate; }
+		} );
+		if ( target ) { target.focus(); }
+	}
+
 	function StatusLine( props ) {
 		var info = props.info;
-		var text;
+		var children;
 
 		if ( info.state === 'empty' ) {
-			text = __( 'No custom JSON-LD. Yoast outputs its normal graph.', 'proto-theme' );
+			children = __( 'No custom JSON-LD. Yoast outputs its normal graph.', 'proto-theme' );
 		} else if ( info.state === 'invalid' ) {
-			text = sprintf(
-				/* translators: %s: JSON parse error. */
-				__( 'Invalid JSON: %s. It is saved as typed but not output until fixed.', 'proto-theme' ),
-				info.error
-			);
+			var loc = info.location;
+			children = [
+				el( 'span', { key: 'msg' },
+					loc
+						? sprintf(
+							/* translators: 1: line number, 2: column number, 3: JSON parse error. */
+							__( 'Invalid JSON on line %1$d, column %2$d: %3$s.', 'proto-theme' ),
+							loc.line, loc.column, info.error
+						)
+						: sprintf(
+							/* translators: %s: JSON parse error. */
+							__( 'Invalid JSON: %s.', 'proto-theme' ),
+							info.error
+						),
+					' ',
+					__( 'It is saved as typed but not output until fixed.', 'proto-theme' )
+				),
+				loc && el( 'button', {
+					key: 'goto',
+					type: 'button',
+					className: 'proto-jsonld__goto',
+					onClick: function () { props.onGoTo( loc ); },
+					style: {
+						marginLeft: '6px', padding: 0, border: 0, background: 'none',
+						color: 'inherit', font: 'inherit', textDecoration: 'underline', cursor: 'pointer',
+					},
+				}, sprintf(
+					/* translators: %d: line number. */
+					__( 'Go to line %d', 'proto-theme' ),
+					loc.line
+				) ),
+			];
 		} else {
-			text = sprintf(
+			children = sprintf(
 				/* translators: 1: node count, 2: comma-separated @type list. */
 				_n( 'Valid JSON. %1$d node: %2$s', 'Valid JSON. %1$d nodes: %2$s', info.types.length, 'proto-theme' ),
 				info.types.length,
 				info.types.join( ', ' ) || '—'
 			);
 			if ( info.skipped ) {
-				text += ' ' + sprintf(
+				children += ' ' + sprintf(
 					/* translators: %d: number of ignored entries. */
 					_n( '(%d entry ignored: not an object.)', '(%d entries ignored: not objects.)', info.skipped, 'proto-theme' ),
 					info.skipped
@@ -131,7 +251,7 @@
 		}
 
 		return el(
-			'p',
+			'div',
 			{
 				className: 'proto-jsonld__status is-' + info.state,
 				role: 'status',
@@ -145,7 +265,7 @@
 					overflowWrap: 'anywhere',
 				},
 			},
-			text
+			children
 		);
 	}
 
@@ -154,10 +274,13 @@
 	 * same edited meta, so they stay in sync.
 	 *
 	 * Markup mirrors Yoast's own field rows (e.g. "Advanced"): a
-	 * `.yoast-field-group` with a `__title` label, `field-group-description`
-	 * help text and a `.yoast-field-group__textarea`, so spacing, borders and
-	 * type come from Yoast's stylesheet and match the native rows. The
+	 * `.yoast-field-group` with a `__title` label and `field-group-description`
+	 * help text, so spacing and type come from Yoast's stylesheet. The
 	 * collapsible already supplies the horizontal padding.
+	 *
+	 * Yoast's collapsibles unmount their content when closed, so collapsing
+	 * and re-expanding the row tears the CodeMirror instance down and mounts
+	 * a fresh one — never two editors on one textarea.
 	 */
 	function JsonLdEditor( props ) {
 		var raw = useSelect( function ( select ) {
@@ -168,14 +291,134 @@
 		var info = useMemo( function () { return analyse( raw ); }, [ raw ] );
 		var inputId = 'proto-jsonld-input-' + props.location;
 
+		var textareaRef = useRef( null );
+		var cmRef = useRef( null );
+		var lastSyncedRef = useRef( raw ); // Last value pushed to / received from the store.
+		var readyState = useState( false );
+		var ready = readyState[ 0 ];
+		var setReady = readyState[ 1 ];
+
 		function setRaw( next ) {
 			var meta = {};
 			meta[ META_KEY ] = next;
 			editPost( { meta: meta } );
 		}
+		var setRawRef = useRef( setRaw );
+		setRawRef.current = setRaw;
+
+		// Tint the line a parse error points at. Declared before the mount
+		// effect so its cleanup runs while the editor still exists.
+		useEffect( function () {
+			var cm = cmRef.current;
+			var loc = info.state === 'invalid' && info.location;
+			if ( ! cm || ! loc ) { return undefined; }
+			var handle = cm.addLineClass( Math.min( loc.line - 1, cm.lineCount() - 1 ), 'background', 'proto-jsonld-error-line' );
+			cm.addLineClass( handle, 'wrap', 'proto-jsonld-error-wrap' );
+			return function () {
+				cm.removeLineClass( handle, 'background', 'proto-jsonld-error-line' );
+				cm.removeLineClass( handle, 'wrap', 'proto-jsonld-error-wrap' );
+			};
+		}, [ info, ready ] );
+
+		// Store → editor: Format, or an edit made in the other row. Ignore the
+		// echo of this editor's own (debounced) edits.
+		useEffect( function () {
+			var cm = cmRef.current;
+			if ( ! cm || raw === lastSyncedRef.current ) { return; }
+			lastSyncedRef.current = raw;
+			if ( cm.getValue() !== raw ) {
+				var cursor = cm.getCursor();
+				cm.setValue( raw );
+				cm.setCursor( cursor );
+			}
+		}, [ raw, ready ] );
+
+		// Mount core's CodeMirror on the textarea; tear it down on unmount.
+		useEffect( function () {
+			if ( ! CODE_EDITOR || ! textareaRef.current ) { return undefined; }
+
+			var timer = null;
+			var codemirror = Object.assign( {}, CODE_EDITOR.codemirror, {
+				extraKeys: Object.assign( {}, CODE_EDITOR.codemirror && CODE_EDITOR.codemirror.extraKeys, {
+					// Indent with spaces: a literal tab inside a string is invalid JSON.
+					Tab: function ( cm ) {
+						if ( cm.somethingSelected() ) { cm.indentSelection( 'add' ); } else { cm.execCommand( 'insertSoftTab' ); }
+					},
+					'Shift-Tab': function ( cm ) { cm.indentSelection( 'subtract' ); },
+				} ),
+			} );
+			var instance = wp.codeEditor.initialize( textareaRef.current, Object.assign( {}, CODE_EDITOR, {
+				codemirror: codemirror,
+				// Escape, then Tab / Shift+Tab leaves the editor (core behaviour).
+				onTabNext: function ( cm ) { focusSibling( cm.getWrapperElement(), true ); },
+				onTabPrevious: function ( cm ) { focusSibling( cm.getWrapperElement(), false ); },
+			} ) );
+			var cm = instance.codemirror;
+
+			// Core offers JavaScript keyword hints in this mode; noise for JSON.
+			cm.showHint = function () {};
+
+			function flush() {
+				clearTimeout( timer );
+				timer = null;
+				var value = cm.getValue();
+				if ( value !== lastSyncedRef.current ) {
+					lastSyncedRef.current = value;
+					setRawRef.current( value );
+				}
+			}
+			cm.on( 'change', function ( _cm, change ) {
+				if ( change.origin === 'setValue' ) { return; }
+				clearTimeout( timer );
+				timer = setTimeout( flush, SYNC_DELAY );
+			} );
+			cm.on( 'blur', flush );
+
+			// CodeMirror measures on init; re-measure when the row's width
+			// changes (sidebar opened, Yoast tab switched, window resized).
+			var host = cm.getWrapperElement().parentNode;
+			var lastWidth = host.clientWidth;
+			var observer = window.ResizeObserver ? new window.ResizeObserver( function () {
+				if ( host.clientWidth !== lastWidth ) {
+					lastWidth = host.clientWidth;
+					cm.refresh();
+				}
+			} ) : null;
+			if ( observer ) { observer.observe( host ); }
+
+			cmRef.current = cm;
+			setReady( true );
+
+			return function () {
+				flush();
+				if ( observer ) { observer.disconnect(); }
+				cmRef.current = null;
+				cm.toTextArea();
+			};
+		}, [] );
+
+		function currentValue() {
+			return cmRef.current ? cmRef.current.getValue() : raw;
+		}
 
 		function format() {
-			try { setRaw( JSON.stringify( JSON.parse( raw ), null, 2 ) ); } catch ( e ) {}
+			try { setRaw( JSON.stringify( JSON.parse( currentValue() ), null, 2 ) ); } catch ( e ) {}
+		}
+
+		function goTo( loc ) {
+			var cm = cmRef.current;
+			if ( cm ) {
+				var pos = { line: Math.min( loc.line - 1, cm.lineCount() - 1 ), ch: Math.max( loc.column - 1, 0 ) };
+				cm.focus();
+				cm.setCursor( pos );
+				cm.scrollIntoView( pos, 60 );
+				return;
+			}
+			var textarea = textareaRef.current;
+			if ( textarea ) {
+				textarea.focus();
+				textarea.setSelectionRange( loc.offset, loc.offset );
+			}
 		}
 
 		return el(
@@ -193,30 +436,35 @@
 				el( 'p', { className: 'field-group-description' },
 					__( 'Nodes that describe this page (a WebPage type such as FAQPage, or "@id": "#webpage") merge into Yoast\'s WebPage; every other node is appended to Yoast\'s graph, with "#…" ids resolved against this page\'s URL.', 'proto-theme' )
 				),
-				el( 'textarea', {
-					id: inputId,
-					className: 'yoast-field-group__textarea proto-jsonld__textarea',
-					value: raw,
-					onChange: function ( event ) { setRaw( event.target.value ); },
-					rows: 12,
-					spellCheck: false,
-					autoComplete: 'off',
-					placeholder: '{\n  "@type": "FAQPage",\n  "mainEntity": [ { "@id": "#q1" } ]\n}',
-					style: {
-						display: 'block',
-						fontFamily: 'Menlo, Consolas, Monaco, "Liberation Mono", monospace',
-						fontSize: '12px',
-						lineHeight: 1.5,
-						resize: 'vertical',
-					},
-				} ),
+				// Own wrapper: CodeMirror inserts its DOM next to the textarea,
+				// so keep that out of React-managed siblings.
+				el( 'div', { className: 'proto-jsonld__editor' },
+					el( 'textarea', {
+						id: inputId,
+						ref: textareaRef,
+						className: 'yoast-field-group__textarea proto-jsonld__textarea',
+						value: raw,
+						onChange: function ( event ) { setRaw( event.target.value ); },
+						rows: 14,
+						spellCheck: false,
+						autoComplete: 'off',
+						placeholder: '{\n  "@type": "FAQPage",\n  "mainEntity": [ { "@id": "#q1" } ]\n}',
+						style: {
+							display: 'block',
+							fontFamily: 'Menlo, Consolas, Monaco, "Liberation Mono", monospace',
+							fontSize: '12px',
+							lineHeight: 1.5,
+							resize: 'vertical',
+						},
+					} )
+				),
 				el(
 					'div',
 					{
 						className: 'proto-jsonld__footer',
 						style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px 16px', marginTop: '8px' },
 					},
-					el( StatusLine, { info: info } ),
+					el( StatusLine, { info: info, onGoTo: goTo } ),
 					el( 'button', {
 						type: 'button',
 						className: 'yoast-button yoast-button--secondary proto-jsonld__format',

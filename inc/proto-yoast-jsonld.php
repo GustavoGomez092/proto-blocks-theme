@@ -105,6 +105,28 @@ function proto_jsonld_enqueue_editor(): void
         $deps[] = 'yoast-seo-editor-modules';
     }
 
+    // Code editor: the CodeMirror build bundled with core (`wp.codeEditor`),
+    // in JSON-LD mode with core's jsonlint gutter. Returns false when the
+    // user turned syntax highlighting off in their profile; the JS then
+    // falls back to a plain textarea.
+    $code_editor = wp_enqueue_code_editor([
+        'type'       => 'application/ld+json',
+        'codemirror' => [
+            'lineNumbers'       => true,
+            'lineWrapping'      => true,
+            'matchBrackets'     => true,
+            'autoCloseBrackets' => true,
+            'styleActiveLine'   => true,
+            'indentUnit'        => 2,
+            'tabSize'           => 2,
+            'indentWithTabs'    => false,
+            'viewportMargin'    => 100000, // Auto-height; documents are small.
+        ],
+    ]);
+    if ($code_editor) {
+        $deps[] = 'code-editor';
+    }
+
     wp_enqueue_script(
         'proto-yoast-jsonld',
         get_stylesheet_directory_uri() . '/assets/editor/proto-yoast-jsonld.js',
@@ -112,9 +134,39 @@ function proto_jsonld_enqueue_editor(): void
         filemtime($js),
         true
     );
-    wp_localize_script('proto-yoast-jsonld', 'protoYoastJsonLd', [
-        'metaKey' => PROTO_JSONLD_META_KEY,
-    ]);
+    // Inline JSON (not wp_localize_script) so booleans and nested settings
+    // keep their types.
+    wp_add_inline_script(
+        'proto-yoast-jsonld',
+        'window.protoYoastJsonLd = ' . wp_json_encode([
+            'metaKey'    => PROTO_JSONLD_META_KEY,
+            'codeEditor' => $code_editor ?: false,
+        ], JSON_HEX_TAG | JSON_UNESCAPED_SLASHES) . ';',
+        'before'
+    );
+
+    // Editor chrome: match Yoast's input border/shadow, grow from ~14 to
+    // ~18 lines (12px x 1.5 line height) then scroll, and tint the line a
+    // JSON parse error points at.
+    wp_register_style('proto-yoast-jsonld', false, $code_editor ? ['code-editor'] : [], filemtime($js));
+    wp_enqueue_style('proto-yoast-jsonld');
+    wp_add_inline_style('proto-yoast-jsonld', '
+        .proto-jsonld__editor .CodeMirror {
+            height: auto;
+            border: 1px solid rgba(0, 0, 0, .2);
+            border-radius: 0;
+            box-shadow: inset 0 2px 4px rgba(0, 0, 0, .1);
+            font-family: Menlo, Consolas, Monaco, "Liberation Mono", monospace;
+            font-size: 12px;
+            line-height: 1.5;
+        }
+        .proto-jsonld__editor .CodeMirror-focused { box-shadow: var(--yoast-color-focus, 0 0 0 2px #5b9dd9); }
+        /* +50px offsets the -50px CodeMirror scroll margin: ~14 to ~18 visible lines. */
+        .proto-jsonld__editor .CodeMirror-scroll { min-height: 302px; max-height: 374px; }
+        .proto-jsonld__editor .CodeMirror-gutters { background: #f6f7f7; border-right: 1px solid #dcdcde; }
+        .proto-jsonld__editor .proto-jsonld-error-line { background: #fcf0f1; }
+        .proto-jsonld__editor .proto-jsonld-error-wrap .CodeMirror-linenumber { color: #cc1818; font-weight: 600; }
+    ');
 }
 
 /**

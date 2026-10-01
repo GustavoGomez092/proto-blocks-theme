@@ -52,6 +52,8 @@ The feature is inert unless Yoast SEO is active (`defined('WPSEO_VERSION')`): no
 
 Code: `inc/proto-yoast-jsonld.php` (meta + `wpseo_schema_graph` filter) and `assets/editor/proto-yoast-jsonld.js` (editor row, plain script, no build). The row fills Yoast's public `YoastMetabox` / `YoastSidebar` SlotFill slots with Yoast's own `MetaboxCollapsible` / `SidebarCollapsible` components from `window.yoast.editorModules`, the same extension point Yoast Premium uses.
 
+The code field is the CodeMirror build bundled with WordPress core (`wp_enqueue_code_editor()` in `application/ld+json` mode). It has line numbers, JSON-LD highlighting, bracket matching and auto-closing, auto-indent, 2-space soft tabs, and core's jsonlint gutter. It grows from about 14 to 18 lines, then scrolls. A live status line under it shows whether the JSON is valid and lists the nodes that will be output. On a parse error it names the line and column, highlights that line, and offers **Go to line**. **Format** pretty-prints valid JSON. Press Escape, then Tab, to move focus out of the editor. If a user has turned off syntax highlighting in their profile, the field falls back to a plain textarea.
+
 ### Data contract
 
 | | |
