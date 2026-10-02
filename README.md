@@ -313,7 +313,7 @@ Proto-theme enqueues all animation libraries as self-hosted scripts and exposes 
 | `window.lottie` | lottie-web (light) | 5.13.0 |
 | `window.Lenis` | Lenis smooth scroll | 1.1.13 |
 
-Lenis is initialized automatically by `scripts/proto-init.js` and exposed as `window.__protoLenis`. To pause smooth scroll during a transition (e.g., while a modal is open), call `window.__protoLenis.stop()` and `window.__protoLenis.start()`.
+Lenis is initialized automatically by `scripts/proto-init.js` and exposed as `window.protoLenis`. To pause smooth scroll during a transition (e.g., while a modal is open), call `window.protoLenis.stop()` and `window.protoLenis.start()`.
 
 All library files live in `scripts/` and are versioned by their `filemtime`, so browsers bust the cache on update automatically.
 
