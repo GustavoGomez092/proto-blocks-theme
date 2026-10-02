@@ -42,6 +42,12 @@ body {
   min-height: 100vh;
 }
 
+/* The shell spaces its parts itself; drop core's blockGap margin between
+   header / [data-taxi] / footer (:root :where(.wp-site-blocks) > *). */
+body .wp-site-blocks > * {
+  margin-block: 0;
+}
+
 /* The Taxi wrapper sits between .wp-site-blocks and <main>. It stretches like
    <main> used to, and stacks its children in one grid cell so the outgoing and
    incoming views overlap during a transition instead of stacking vertically. */
@@ -58,9 +64,11 @@ body {
   min-width: 0;
 }
 
-.wp-site-blocks > header,
-.wp-site-blocks > footer,
-.wp-site-blocks main {
+/* Header / footer shells are full width and unpadded so full-bleed blocks in
+   template parts match the content area. Only <main> keeps the cap + gutters;
+   the default parts apply the same cap + gutters to their inner wrapper. */
+.wp-site-blocks main,
+.proto-shell-inner {
   box-sizing: border-box;        /* keep padding inside the 1440 / 100% width */
   width: 100%;
   max-width: 1440px;
