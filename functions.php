@@ -6,6 +6,8 @@
 require_once get_stylesheet_directory() . '/inc/proto-required-plugins.php';
 require_once get_stylesheet_directory() . '/inc/proto-taxi.php';
 require_once get_stylesheet_directory() . '/inc/proto-yoast-jsonld.php'; // Inert unless Yoast SEO is active.
+require_once get_stylesheet_directory() . '/inc/proto-curtain.php';
+require_once get_stylesheet_directory() . '/inc/proto-reveal.php';
 
 add_action('after_setup_theme', function () {
     // Navigation is managed via the block-editor Navigation block in the Site
