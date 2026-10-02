@@ -44,6 +44,69 @@ If you want to disable the builder canvas for a specific page, open the page, go
 
 ---
 
+## Custom JSON-LD (Yoast extension)
+
+Yoast SEO only lets you add arbitrary schema in Premium. Proto-theme adds it to free Yoast: a collapsible **JSON-LD** row in Yoast's own editor UI (at the end of the SEO tab in the metabox, and at the end of the Yoast SEO sidebar panel), and the stored nodes are merged into the **single** schema graph Yoast already prints. No second `<script type="application/ld+json">` is added.
+
+The feature is inert unless Yoast SEO is active (`defined('WPSEO_VERSION')`): no meta, no editor UI, no output.
+
+Code: `inc/proto-yoast-jsonld.php` (meta + `wpseo_schema_graph` filter) and `assets/editor/proto-yoast-jsonld.js` (editor row, plain script, no build). The row fills Yoast's public `YoastMetabox` / `YoastSidebar` SlotFill slots with Yoast's own `MetaboxCollapsible` / `SidebarCollapsible` components from `window.yoast.editorModules`, the same extension point Yoast Premium uses.
+
+The code field is the CodeMirror build bundled with WordPress core (`wp_enqueue_code_editor()` in `application/ld+json` mode). It has line numbers, JSON-LD highlighting, bracket matching and auto-closing, auto-indent, 2-space soft tabs, and core's jsonlint gutter. It grows from about 14 to 18 lines, then scrolls. A live status line under it shows whether the JSON is valid and lists the nodes that will be output. On a parse error it names the line and column, highlights that line, and offers **Go to line**. **Format** pretty-prints valid JSON. Press Escape, then Tab, to move focus out of the editor. If a user has turned off syntax highlighting in their profile, the field falls back to a plain textarea.
+
+### Data contract
+
+| | |
+|---|---|
+| **Meta key** | `_proto_jsonld`, a single **string** containing JSON. Registered with `show_in_rest` for every public post type that supports the editor (default `''`; editable by anyone who can `edit_post`). REST exposure also needs `custom-fields` support, which posts and pages have. |
+| **Invalid JSON** | Saved as typed (so it can be fixed later) but never output. Yoast's normal graph renders unchanged. |
+| **Accepted shapes** | A single node object, an array of nodes, or an object with `@graph`. `@context` is optional and is removed from every node. |
+| **Scope** | Singular post indexables only (posts, pages, CPT singles). Skipped for password-protected posts. |
+
+**Merge into Yoast's WebPage.** A node is merged into Yoast's WebPage piece when its `@id` equals the page's main schema id (the permalink) or `#webpage`, or when its `@type` includes `WebPage` or a WebPage subtype (`FAQPage`, `AboutPage`, `ContactPage`, `CollectionPage`, `ItemPage`, `ProfilePage`, `QAPage`, `SearchResultsPage`, `CheckoutPage`, `MedicalWebPage`, `RealEstateListing`, `MediaGallery`, `ImageGallery`, `VideoGallery`). Its properties are `array_merge`d into the piece, the piece keeps Yoast's `@id`, and the `@type`s are unioned (for example `["WebPage", "FAQPage"]`).
+
+**Every other node is appended** to the graph:
+
+- Relative ids starting with `#` resolve to `<canonical>#…`, anywhere in the node (so references like `{"@id": "#q1"}` work in both merged and appended nodes).
+- A missing `@id` becomes `<canonical>#proto-<lowercased first type>-<n>`, where `n` counts per type from 1 (e.g. `#proto-service-1`).
+- A missing `isPartOf` becomes `{"@id": <main schema id>}`, except for `Organization`, `Person`, `Brand`, `WebSite`, `ImageObject` and `Place`.
+
+To reference Yoast's site-wide entities, use their absolute ids (e.g. `https://example.com/#organization`). A relative `#organization` resolves against the page URL, not the home URL.
+
+### Example
+
+```json
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    { "@type": "FAQPage", "mainEntity": [ { "@id": "#q1" }, { "@id": "#q2" } ] },
+    { "@type": "Question", "@id": "#q1", "name": "Do you ship abroad?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Yes, worldwide." } },
+    { "@type": "Question", "@id": "#q2", "name": "How long does it take?",
+      "acceptedAnswer": { "@type": "Answer", "text": "3 to 5 business days." } },
+    { "@type": "Service", "name": "Website build", "areaServed": "US" }
+  ]
+}
+```
+
+On `https://example.com/faq/` this produces Yoast's WebPage piece with `"@type": ["WebPage", "FAQPage"]` and `mainEntity` pointing at `https://example.com/faq/#q1` / `#q2`, plus three appended nodes: the two Questions (`https://example.com/faq/#q1`, `#q2`) and the Service (`https://example.com/faq/#proto-service-1`), each with `"isPartOf": {"@id": "https://example.com/faq/"}`.
+
+Writing it from WP-CLI:
+
+```bash
+wp post meta update <post-id> _proto_jsonld "$(cat faq.json)"
+```
+
+### Filters
+
+| Filter | Default | Purpose |
+|---|---|---|
+| `proto_jsonld_post_types` | public post types with editor support | Post types that get the meta and the editor row. |
+| `proto_jsonld_webpage_types` | WebPage + subtypes listed above | Types that merge into Yoast's WebPage. |
+| `proto_jsonld_standalone_types` | Organization, Person, Brand, WebSite, ImageObject, Place | Types that never get an automatic `isPartOf`. |
+
+---
+
 ## Page Transitions (Taxi.js)
 
 Proto-theme ships [Taxi.js](https://taxi.js.org/) 1.9.1 (with its `@unseenco/e`
