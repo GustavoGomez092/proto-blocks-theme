@@ -146,8 +146,9 @@ function proto_jsonld_enqueue_editor(): void
     );
 
     // Editor chrome: match Yoast's input border/shadow, grow from ~14 to
-    // ~18 lines (12px x 1.5 line height) then scroll, and tint the line a
-    // JSON parse error points at.
+    // ~18 lines (12px x 1.5 line height) then scroll, grey out the empty-
+    // editor hint (core ships no placeholder CSS), and tint the line a JSON
+    // parse error points at.
     wp_register_style('proto-yoast-jsonld', false, $code_editor ? ['code-editor'] : [], filemtime($js));
     wp_enqueue_style('proto-yoast-jsonld');
     wp_add_inline_style('proto-yoast-jsonld', '
@@ -164,6 +165,7 @@ function proto_jsonld_enqueue_editor(): void
         /* +50px offsets the -50px CodeMirror scroll margin: ~14 to ~18 visible lines. */
         .proto-jsonld__editor .CodeMirror-scroll { min-height: 302px; max-height: 374px; }
         .proto-jsonld__editor .CodeMirror-gutters { background: #f6f7f7; border-right: 1px solid #dcdcde; }
+        .proto-jsonld__editor .CodeMirror-placeholder { color: #757575 !important; font-style: italic; }
         .proto-jsonld__editor .proto-jsonld-error-line { background: #fcf0f1; }
         .proto-jsonld__editor .proto-jsonld-error-wrap .CodeMirror-linenumber { color: #cc1818; font-weight: 600; }
     ');

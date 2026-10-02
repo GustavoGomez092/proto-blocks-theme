@@ -195,6 +195,38 @@
 		if ( target ) { target.focus(); }
 	}
 
+	/**
+	 * Replace the whole document in place (keeps undo history, unlike
+	 * setValue), restore the selection when the editor is focused, and
+	 * re-lint right away instead of waiting for the lint delay.
+	 */
+	function replaceDocument( cm, text, origin ) {
+		cm.operation( function () {
+			var selections = cm.hasFocus() ? cm.listSelections() : null;
+			cm.replaceRange( text, { line: cm.firstLine(), ch: 0 }, { line: cm.lastLine() }, origin );
+			if ( selections ) { cm.setSelections( selections ); } // Out-of-range positions are clipped.
+		} );
+		if ( cm.performLint ) { cm.performLint(); }
+	}
+
+	/**
+	 * Lint options on top of core's (jsonlint via the "json" lint helper):
+	 * an empty document is not an error (core's jsonlint reports "got EOF"),
+	 * and hover tooltips are off: they float over the help text, and the
+	 * status line plus the tinted line already explain the error.
+	 */
+	function lintOptions( coreLint ) {
+		if ( ! coreLint ) { return coreLint; }
+		var jsonLint = wp.CodeMirror && wp.CodeMirror.helpers && wp.CodeMirror.helpers.lint && wp.CodeMirror.helpers.lint.json;
+		var options = Object.assign( {}, coreLint === true ? {} : coreLint, { tooltips: false } );
+		if ( jsonLint ) {
+			options.getAnnotations = function ( text, opts, cm ) {
+				return text.trim() ? jsonLint( text, opts, cm ) : [];
+			};
+		}
+		return options;
+	}
+
 	function StatusLine( props ) {
 		var info = props.info;
 		var children;
@@ -270,13 +302,22 @@
 	}
 
 	/**
-	 * The row's body — shared by the metabox and sidebar rows. Both read the
-	 * same edited meta, so they stay in sync.
+	 * The row's body — shared by the metabox and sidebar rows.
+	 *
+	 * Data flow (the post meta is the single source of truth):
+	 * - On mount the editor is created from the textarea, whose value is the
+	 *   current meta.
+	 * - Every editor change (typing, paste, undo, Format, programmatic
+	 *   replacement) updates `doc` at once, so the status line, the error
+	 *   line and the Format button always describe what is on screen. The
+	 *   meta write is debounced and flushed on blur and on unmount.
+	 * - A meta change this editor did not make (the other row, Update/revert)
+	 *   replaces the document in place, keeping the selection when focused,
+	 *   then re-lints.
 	 *
 	 * Markup mirrors Yoast's own field rows (e.g. "Advanced"): a
 	 * `.yoast-field-group` with a `__title` label and `field-group-description`
-	 * help text, so spacing and type come from Yoast's stylesheet. The
-	 * collapsible already supplies the horizontal padding.
+	 * help text, so spacing and type come from Yoast's stylesheet.
 	 *
 	 * Yoast's collapsibles unmount their content when closed, so collapsing
 	 * and re-expanding the row tears the CodeMirror instance down and mounts
@@ -288,15 +329,24 @@
 			return typeof meta[ META_KEY ] === 'string' ? meta[ META_KEY ] : '';
 		}, [] );
 		var editPost = useDispatch( 'core/editor' ).editPost;
-		var info = useMemo( function () { return analyse( raw ); }, [ raw ] );
 		var inputId = 'proto-jsonld-input-' + props.location;
 
 		var textareaRef = useRef( null );
 		var cmRef = useRef( null );
-		var lastSyncedRef = useRef( raw ); // Last value pushed to / received from the store.
+		var flushRef = useRef( function () {} );
+		var lastSyncedRef = useRef( raw ); // Last value written to / received from the meta.
+
+		// The editor's live document. Without CodeMirror (fallback textarea)
+		// the meta itself is the document.
+		var docState = useState( raw );
+		var cmDoc = docState[ 0 ];
+		var setCmDoc = docState[ 1 ];
 		var readyState = useState( false );
 		var ready = readyState[ 0 ];
 		var setReady = readyState[ 1 ];
+		var doc = ready ? cmDoc : raw;
+
+		var info = useMemo( function () { return analyse( doc ); }, [ doc ] );
 
 		function setRaw( next ) {
 			var meta = {};
@@ -320,16 +370,13 @@
 			};
 		}, [ info, ready ] );
 
-		// Store → editor: Format, or an edit made in the other row. Ignore the
-		// echo of this editor's own (debounced) edits.
+		// Meta → editor, for changes this editor did not make.
 		useEffect( function () {
 			var cm = cmRef.current;
 			if ( ! cm || raw === lastSyncedRef.current ) { return; }
-			lastSyncedRef.current = raw;
+			lastSyncedRef.current = raw; // Set first: the change handler must not write it back.
 			if ( cm.getValue() !== raw ) {
-				var cursor = cm.getCursor();
-				cm.setValue( raw );
-				cm.setCursor( cursor );
+				replaceDocument( cm, raw, 'proto-sync' );
 			}
 		}, [ raw, ready ] );
 
@@ -339,21 +386,32 @@
 
 			var timer = null;
 			var codemirror = Object.assign( {}, CODE_EDITOR.codemirror, {
+				// The placeholder addon copies the textarea placeholder, and core
+				// ships no CSS for it, so it would render like real content.
+				// Use plain-language hint text (styled grey in PHP) instead.
+				placeholder: __( 'Paste or type JSON-LD here.', 'proto-theme' ),
+				lint: lintOptions( CODE_EDITOR.codemirror && CODE_EDITOR.codemirror.lint ),
 				extraKeys: Object.assign( {}, CODE_EDITOR.codemirror && CODE_EDITOR.codemirror.extraKeys, {
 					// Indent with spaces: a literal tab inside a string is invalid JSON.
-					Tab: function ( cm ) {
-						if ( cm.somethingSelected() ) { cm.indentSelection( 'add' ); } else { cm.execCommand( 'insertSoftTab' ); }
+					Tab: function ( editor ) {
+						if ( editor.somethingSelected() ) { editor.indentSelection( 'add' ); } else { editor.execCommand( 'insertSoftTab' ); }
 					},
-					'Shift-Tab': function ( cm ) { cm.indentSelection( 'subtract' ); },
+					'Shift-Tab': function ( editor ) { editor.indentSelection( 'subtract' ); },
 				} ),
 			} );
 			var instance = wp.codeEditor.initialize( textareaRef.current, Object.assign( {}, CODE_EDITOR, {
 				codemirror: codemirror,
 				// Escape, then Tab / Shift+Tab leaves the editor (core behaviour).
-				onTabNext: function ( cm ) { focusSibling( cm.getWrapperElement(), true ); },
-				onTabPrevious: function ( cm ) { focusSibling( cm.getWrapperElement(), false ); },
+				onTabNext: function ( editor ) { focusSibling( editor.getWrapperElement(), true ); },
+				onTabPrevious: function ( editor ) { focusSibling( editor.getWrapperElement(), false ); },
 			} ) );
 			var cm = instance.codemirror;
+
+			// The textarea was rendered from the meta; make that explicit so the
+			// editor, `doc` and the meta start identical.
+			if ( cm.getValue() !== lastSyncedRef.current ) {
+				cm.setValue( lastSyncedRef.current );
+			}
 
 			// Core offers JavaScript keyword hints in this mode; noise for JSON.
 			cm.showHint = function () {};
@@ -367,8 +425,12 @@
 					setRawRef.current( value );
 				}
 			}
-			cm.on( 'change', function ( _cm, change ) {
-				if ( change.origin === 'setValue' ) { return; }
+			flushRef.current = flush;
+
+			// Every change — typing, paste, undo, Format, sync — updates the
+			// live document; the meta write is debounced (a no-op for sync).
+			cm.on( 'change', function () {
+				setCmDoc( cm.getValue() );
 				clearTimeout( timer );
 				timer = setTimeout( flush, SYNC_DELAY );
 			} );
@@ -387,22 +449,29 @@
 			if ( observer ) { observer.observe( host ); }
 
 			cmRef.current = cm;
+			setCmDoc( cm.getValue() );
 			setReady( true );
+			if ( cm.performLint ) { cm.performLint(); }
 
 			return function () {
 				flush();
 				if ( observer ) { observer.disconnect(); }
+				flushRef.current = function () {};
 				cmRef.current = null;
 				cm.toTextArea();
 			};
 		}, [] );
 
-		function currentValue() {
-			return cmRef.current ? cmRef.current.getValue() : raw;
-		}
-
 		function format() {
-			try { setRaw( JSON.stringify( JSON.parse( currentValue() ), null, 2 ) ); } catch ( e ) {}
+			var cm = cmRef.current;
+			var pretty;
+			try { pretty = JSON.stringify( JSON.parse( cm ? cm.getValue() : raw ), null, 2 ); } catch ( e ) { return; }
+			if ( cm ) {
+				replaceDocument( cm, pretty, 'proto-format' );
+				flushRef.current();
+			} else {
+				setRaw( pretty );
+			}
 		}
 
 		function goTo( loc ) {
@@ -448,7 +517,7 @@
 						rows: 14,
 						spellCheck: false,
 						autoComplete: 'off',
-						placeholder: '{\n  "@type": "FAQPage",\n  "mainEntity": [ { "@id": "#q1" } ]\n}',
+						placeholder: __( 'Paste or type JSON-LD here.', 'proto-theme' ),
 						style: {
 							display: 'block',
 							fontFamily: 'Menlo, Consolas, Monaco, "Liberation Mono", monospace',
