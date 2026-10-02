@@ -93,6 +93,68 @@ transitions are off, since without a page merge there is nothing to leak.
 add_filter('proto_reveal_guard_enabled', '__return_false');
 ```
 
+## Clean up on `proto:page-leave`
+
+Taxi removes the outgoing view, but nothing you attached outside it goes with it.
+`proto-taxi.js` kills the ScrollTriggers inside the leaving container, so the
+live trigger count stays flat — that is the only thing it cleans up. Everything
+else is yours.
+
+Three things leak if you let them, all measured on a real site over six
+navigations between two pages:
+
+| What | Before | Why |
+|---|---|---|
+| `window` / `document` listeners | `resize` 11 → 27, `proto:page-ready` 4 → 7 | Block view scripts carry `data-taxi-reload`, so Taxi re-runs them and re-registers |
+| Paused gsap timelines | 2 → 8, global children 10 → 31 | A timeline built standalone is not a trigger, so killing triggers never disposes it |
+| ScrollTrigger resize listeners | 7 → 37 | See the note at the end |
+
+The pattern is the same for all of them — dispose when your own container
+leaves:
+
+```js
+document.addEventListener('proto:page-leave', function off(e) {
+	var container = e && e.detail && e.detail.container;
+
+	if (container && !container.contains(section)) return;   // not ours
+
+	if (tl.scrollTrigger) tl.scrollTrigger.kill(false);
+	tl.kill();
+	window.removeEventListener('resize', onResize);
+	document.removeEventListener('proto:page-leave', off);
+});
+```
+
+Check the leaving container actually holds your element, or one block tears down
+another's. And use `kill(false)` on a ScrollTrigger: a bare `kill()` reverts,
+stripping the inline opacity a pre-reveal state depends on and popping the
+section visible just as it starts to leave.
+
+### A timeline with a trigger attached afterwards is still your problem
+
+```js
+var tl = gsap.timeline({ paused: true });   // not a ScrollTrigger
+// …add tweens, then attach the trigger…
+```
+
+Building the timeline first and attaching the trigger after is often necessary —
+passing `scrollTrigger` to the constructor takes hold of an empty timeline and
+starts the tweens added next. But it means `killScrollTriggersIn()` cannot see
+the timeline, because the timeline is not a trigger. Dispose it yourself.
+
+If you are hunting one of these, attribute the allocation rather than guessing:
+wrap `gsap.timeline` and record a stack frame per call. Two plausible fixes —
+sweeping for tweens with detached targets, and killing `trigger.animation` —
+both did nothing on the real case, because the objects accumulating were
+timelines with no targets that no trigger referenced.
+
+### What is not fixable from here
+
+Live `window` resize listeners registered by `ScrollTrigger.min.js` still grow
+across navigations, and the library releases none of them. Disposing your own
+timelines removes the detached DOM those listeners were holding, which is the
+part that matters; the listener count itself is inside the vendored library.
+
 ## Reveals stop working after a navigation
 
 **Symptom.** Animations run on a full page load and never again. Navigate with
