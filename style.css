@@ -76,6 +76,19 @@ body .wp-site-blocks > * {
   flex: 1 0 auto; /* take the leftover height */
 }
 
+/* Logged-in view: the WordPress admin bar is fixed at the top, so a fixed or
+   sticky header (the header part's first child) starts below it instead of
+   underneath it. Core sets --wp-admin--admin-bar--height (32px, 46px under
+   783px); the fallbacks cover older cores. Logged-out visitors are unaffected. */
+body.admin-bar .wp-site-blocks > header > :first-child {
+  top: var(--wp-admin--admin-bar--height, 32px);
+}
+@media screen and (max-width: 782px) {
+  body.admin-bar .wp-site-blocks > header > :first-child {
+    top: var(--wp-admin--admin-bar--height, 46px);
+  }
+}
+
 /* Header: keep site branding and navigation on a single, vertically
    centered row instead of letting the nav wrap below the branding. */
 .wp-site-blocks > header .wp-block-group.is-layout-flex {
