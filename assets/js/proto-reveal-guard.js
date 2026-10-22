@@ -6,7 +6,11 @@
  *   [data-proto-animate]:not([data-proto-animate="done"]) *
  *   { opacity:1!important; transform:none!important; visibility:visible!important }
  *
- * That is right for readers without JavaScript, and inert for everyone else —
+ * and the pb-motion runtime (inc/pb-motion.php) prints its own:
+ *
+ *   [data-pb-motion][data-proto-animate] { opacity:1!important }
+ *
+ * Both are right for readers without JavaScript, and inert for everyone else —
  * until Taxi fetches a page. Taxi parses the incoming HTML with scripting
  * disabled, and in that mode <noscript> contents parse as real elements rather
  * than as text. Merging the parsed page then promotes that <style> into the
@@ -32,7 +36,10 @@
 (function () {
 	'use strict';
 
-	var SIGNATURE = '[data-proto-animate]:not([data-proto-animate="done"])';
+	/* Every fallback forces a not-yet-revealed element visible with !important.
+	   A loose <style> doing that to a [data-proto-animate] selector is a
+	   promoted fallback whichever runtime printed it. */
+	var SIGNATURE = /\[data-proto-animate[^{]*\{[^}]*opacity\s*:\s*1\s*!important/;
 
 	function isPromotedFallback(node) {
 		if (!node || node.tagName !== 'STYLE') { return false; }
@@ -41,9 +48,7 @@
 		   alone. Only a promoted copy sits loose in the document. */
 		if (node.closest && node.closest('noscript')) { return false; }
 
-		var css = node.textContent || '';
-
-		return css.indexOf(SIGNATURE) !== -1 && css.indexOf('!important') !== -1;
+		return SIGNATURE.test(node.textContent || '');
 	}
 
 	function drop(root) {

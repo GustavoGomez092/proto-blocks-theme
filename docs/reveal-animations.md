@@ -65,6 +65,13 @@ Proto-Blocks prints its no-JS fallback inside `<noscript>`:
 { opacity:1!important; transform:none!important; visibility:visible!important }
 ```
 
+and the pb-motion runtime installed by the site-builder skill (`inc/pb-motion.php`)
+prints its own:
+
+```css
+[data-pb-motion][data-proto-animate] { opacity:1!important }
+```
+
 Inert for anyone running JavaScript — except that Taxi parses the incoming page
 with scripting disabled, and in that mode **`<noscript>` contents parse as real
 elements**. Merging the parsed page promotes that `<style>` into the live
@@ -73,7 +80,8 @@ inline styles its animation writes. Every not-yet-revealed section is forced
 visible until its script marks it `done`.
 
 [`assets/js/proto-reveal-guard.js`](../assets/js/proto-reveal-guard.js) removes
-the promoted copy. It leaves the real `<noscript>` alone, so readers without
+any promoted copy: a loose `<style>` that forces a `[data-proto-animate]`
+selector visible with `opacity:1!important`, whichever runtime printed it. It leaves the real `<noscript>` alone, so readers without
 JavaScript still get their fallback.
 
 Two details, each of which cost an attempt before landing:
