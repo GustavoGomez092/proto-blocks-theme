@@ -81,9 +81,16 @@
    *   - modified clicks (cmd / ctrl / shift / alt / middle-button)
    *   - target="_blank" or other non-_self frames
    *   - download attribute set
-   *   - cross-origin or different-path URLs (full navigation)
+   *   - cross-origin or different-path URLs (full navigation; "/services" and
+   *     "/services/" count as the same path)
    *   - hash that doesn't resolve to an element on this page
    *   - href="#" (no-op anchors)
+   *
+   * A handled click stops here (stopImmediatePropagation): Taxi's delegated
+   * click handler on document ignores defaultPrevented and compares href
+   * strings, so "/services#x" clicked on "/services/" would otherwise start a
+   * page transition to the same page. This listener is registered before
+   * Taxi's (proto-taxi.js depends on this file), so it runs first.
    */
   document.addEventListener('click', function (e) {
     if (e.defaultPrevented) return;
@@ -106,7 +113,7 @@
       try {
         var url = new URL(a.href, window.location.href);
         if (url.origin !== window.location.origin) return;
-        if (url.pathname !== window.location.pathname) return;
+        if (url.pathname.replace(/\/+$/, '') !== window.location.pathname.replace(/\/+$/, '')) return;
         if (!url.hash) return;
         hash = url.hash;
       } catch (err) {
@@ -123,6 +130,7 @@
     if (!target) return;
 
     e.preventDefault();
+    e.stopImmediatePropagation();
     lenis.scrollTo(target);
 
     // Keep the URL in sync without re-triggering the browser's native jump.

@@ -274,6 +274,52 @@
   }
 
   /**
+   * Hash of the link that started the current navigation, when it points at
+   * another page ("/services/#fabrication" clicked anywhere but /services/).
+   * Taxi resolves the fetch URL and writes it back with replaceState, which
+   * drops the hash, and the fade's onEnter resets the scroll to 0; so the
+   * target is scrolled to on NAVIGATE_END and the hash restored in the URL,
+   * which is what a full page load would have done. Same-page hash links
+   * never reach Taxi: proto-init.js scrolls them and stops the event.
+   */
+  var pendingHash = '';
+
+  document.addEventListener('click', function (e) {
+    var a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+    pendingHash = '';
+    if (!a || !a.hash) return;
+    try {
+      var url = new URL(a.href, window.location.href);
+      if (url.origin !== window.location.origin) return;
+      if (url.pathname.replace(/\/+$/, '') === window.location.pathname.replace(/\/+$/, '')) return;
+      pendingHash = url.hash;
+    } catch (err) {
+      pendingHash = '';
+    }
+  }, true);
+
+  function landOnHash() {
+    var hash = pendingHash;
+    pendingHash = '';
+    if (!hash || hash.length < 2) return;
+    var target;
+    try {
+      target = document.getElementById(decodeURIComponent(hash.slice(1)));
+    } catch (err) {
+      return;
+    }
+    if (!target) return;
+    if (window.history && typeof window.history.replaceState === 'function') {
+      window.history.replaceState(null, '', window.location.pathname + window.location.search + hash);
+    }
+    if (window.protoLenis) {
+      window.protoLenis.scrollTo(target, { force: true });
+    } else {
+      target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }
+
+  /**
    * Kill only the ScrollTriggers whose trigger element lived inside the view
    * being removed. Triggers created by the persistent header/footer survive.
    *
@@ -372,6 +418,8 @@
         url: window.location.href
       });
     });
+
+    safe('landOnHash', landOnHash);
   });
 
   /* The initial page load gets the same event, so block code has exactly one
