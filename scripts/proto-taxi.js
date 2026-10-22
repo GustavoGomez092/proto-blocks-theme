@@ -312,10 +312,11 @@
     if (window.history && typeof window.history.replaceState === 'function') {
       window.history.replaceState(null, '', window.location.pathname + window.location.search + hash);
     }
+    var offset = typeof window.protoHeaderOffset === 'function' ? -window.protoHeaderOffset() : 0;
     if (window.protoLenis) {
-      window.protoLenis.scrollTo(target, { force: true });
+      window.protoLenis.scrollTo(target, { force: true, offset: offset });
     } else {
-      target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      window.scrollTo({ top: target.getBoundingClientRect().top + window.pageYOffset + offset, behavior: 'smooth' });
     }
   }
 

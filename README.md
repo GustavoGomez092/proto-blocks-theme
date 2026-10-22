@@ -211,9 +211,11 @@ on `/about/`; `/about#team` counts too) never start a transition: `proto-init.js
 scrolls to the target through Lenis and updates the hash. Links to an id on
 **another** page (`/services/#fabrication` clicked from the home page) run the
 transition, then `proto-taxi.js` scrolls to that id and restores the hash in the
-URL, since Taxi writes the resolved fetch URL back without it. Write the anchor
-id on an element at the top edge of its section: a target placed after the
-section's padding lands below it.
+URL, since Taxi writes the resolved fetch URL back without it. Both stop the
+target just below a fixed or sticky header (the header template part, or a
+fixed element directly inside it; `window.protoHeaderOffset()` is the measure).
+Write the anchor id on an element at the top edge of its section: a target
+placed after the section's padding lands below it.
 
 ### Routes this integration doesn't cover
 

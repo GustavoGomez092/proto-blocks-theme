@@ -70,6 +70,28 @@
   }
 
   /**
+   * How far a scroll target must stop below the viewport top so a fixed or
+   * sticky header does not cover it: the bottom edge of the header template
+   * part (or of a fixed/sticky element directly inside it, which is how a
+   * block header is usually built), 0 when the header scrolls with the page.
+   * Measured per call, so the admin bar and a shrinking header are included.
+   * Shared with proto-taxi.js, which lands on cross-page anchors.
+   */
+  function headerOffset() {
+    var part = document.querySelector('header.wp-block-template-part');
+    if (!part) return 0;
+    var nodes = [part].concat(Array.prototype.slice.call(part.children));
+    for (var i = 0; i < nodes.length; i++) {
+      var pos = window.getComputedStyle(nodes[i]).position;
+      if (pos !== 'fixed' && pos !== 'sticky') continue;
+      var bottom = nodes[i].getBoundingClientRect().bottom;
+      return bottom > 0 ? bottom : 0;
+    }
+    return 0;
+  }
+  window.protoHeaderOffset = headerOffset;
+
+  /**
    * Delegated anchor-link handler.
    *
    * When Lenis is driving the page scroll, the browser's native "jump to
@@ -131,7 +153,7 @@
 
     e.preventDefault();
     e.stopImmediatePropagation();
-    lenis.scrollTo(target);
+    lenis.scrollTo(target, { offset: -headerOffset() });
 
     // Keep the URL in sync without re-triggering the browser's native jump.
     if (window.history && typeof window.history.pushState === 'function') {
@@ -142,4 +164,31 @@
       );
     }
   });
+
+  /**
+   * A full page load with a hash: the browser has already jumped so the
+   * target sits at the very top, under a fixed header. Move it below the
+   * header once the layout is in (fonts and images above it change its
+   * position, so this waits for the load event), without animation.
+   */
+  function landOnLoadHash() {
+    var hash = window.location.hash;
+    if (!hash || hash.length < 2) return;
+    var target;
+    try {
+      target = document.getElementById(decodeURIComponent(hash.slice(1)));
+    } catch (err) {
+      return;
+    }
+    if (!target) return;
+    var offset = headerOffset();
+    if (!offset) return;
+    lenis.scrollTo(target, { offset: -offset, immediate: true, force: true });
+  }
+
+  if (document.readyState === 'complete') {
+    landOnLoadHash();
+  } else {
+    window.addEventListener('load', landOnLoadHash);
+  }
 })();
