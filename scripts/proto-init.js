@@ -92,6 +92,20 @@
   window.protoHeaderOffset = headerOffset;
 
   /**
+   * How far above an anchor target the scroll should stop: the fixed header,
+   * plus the target's own `scroll-margin-top`. That CSS property is the
+   * standard way for an element to say where links into it should land; a
+   * section with top padding sets a negative value to land inside its
+   * padding (e.g. `scroll-margin-top: calc(40px - 6rem)` for a 40px gap
+   * under the header). Shared with proto-taxi.js for cross-page anchors.
+   */
+  function anchorOffset(target) {
+    var margin = parseFloat(window.getComputedStyle(target).scrollMarginTop);
+    return headerOffset() + (isNaN(margin) ? 0 : margin);
+  }
+  window.protoAnchorOffset = anchorOffset;
+
+  /**
    * Delegated anchor-link handler.
    *
    * When Lenis is driving the page scroll, the browser's native "jump to
@@ -153,7 +167,7 @@
 
     e.preventDefault();
     e.stopImmediatePropagation();
-    lenis.scrollTo(target, { offset: -headerOffset() });
+    lenis.scrollTo(target, { offset: -anchorOffset(target) });
 
     // Keep the URL in sync without re-triggering the browser's native jump.
     if (window.history && typeof window.history.pushState === 'function') {
@@ -181,7 +195,7 @@
       return;
     }
     if (!target) return;
-    var offset = headerOffset();
+    var offset = anchorOffset(target);
     if (!offset) return;
     lenis.scrollTo(target, { offset: -offset, immediate: true, force: true });
   }

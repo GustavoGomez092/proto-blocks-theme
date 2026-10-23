@@ -213,9 +213,13 @@ scrolls to the target through Lenis and updates the hash. Links to an id on
 transition, then `proto-taxi.js` scrolls to that id and restores the hash in the
 URL, since Taxi writes the resolved fetch URL back without it. Both stop the
 target just below a fixed or sticky header (the header template part, or a
-fixed element directly inside it; `window.protoHeaderOffset()` is the measure).
-Write the anchor id on an element at the top edge of its section: a target
-placed after the section's padding lands below it.
+fixed element directly inside it; `window.protoHeaderOffset()` is the measure)
+plus the target's own CSS `scroll-margin-top`, the standard property for
+"where links into me should land" (`window.protoAnchorOffset(target)` is the
+sum). Put the id on the section itself and let its CSS set the landing: a
+section with `6rem` of top padding that should show a 40px gap under the
+header declares `scroll-margin-top: calc(40px - 6rem)`. No extra anchor
+elements are needed.
 
 ### Routes this integration doesn't cover
 

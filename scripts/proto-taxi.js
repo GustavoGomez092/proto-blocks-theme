@@ -312,7 +312,9 @@
     if (window.history && typeof window.history.replaceState === 'function') {
       window.history.replaceState(null, '', window.location.pathname + window.location.search + hash);
     }
-    var offset = typeof window.protoHeaderOffset === 'function' ? -window.protoHeaderOffset() : 0;
+    // Fixed header plus the target's scroll-margin-top (proto-init.js); the header alone on an older proto-init.
+    var offset = typeof window.protoAnchorOffset === 'function' ? -window.protoAnchorOffset(target)
+      : typeof window.protoHeaderOffset === 'function' ? -window.protoHeaderOffset() : 0;
     if (window.protoLenis) {
       window.protoLenis.scrollTo(target, { force: true, offset: offset });
     } else {
