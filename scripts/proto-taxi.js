@@ -385,6 +385,28 @@
     });
   });
 
+  /**
+   * Links to this site's own host but on the other scheme (an `http://` menu
+   * link on an `https://` page, typically a site whose stored URLs were
+   * migrated by host only). Taxi compares hosts, so it treats such a link as
+   * internal and starts the transition, but its same-origin fetch of the
+   * other scheme is blocked as mixed content and the fallback is a full
+   * page load: the curtain drops and the page then reloads. Pointing the link
+   * at the page's own scheme keeps the transition on the fast path. Runs for
+   * the first document and again for every swapped-in page.
+   */
+  function sameSchemeLinks(root) {
+    var links = (root || document).querySelectorAll('a[href]');
+    for (var i = 0; i < links.length; i++) {
+      var a = links[i];
+      if (a.host === window.location.host && a.protocol !== window.location.protocol &&
+          (a.protocol === 'http:' || a.protocol === 'https:')) {
+        a.protocol = window.location.protocol;
+      }
+    }
+  }
+  safe('sameSchemeLinks', function () { sameSchemeLinks(document); });
+
   E.on('NAVIGATE_IN', function (payload) {
     if (!payload || !payload.to) return;
 
@@ -402,6 +424,7 @@
       ? payload.to.renderer.content
       : liveView();
 
+    safe('sameSchemeLinks', function () { sameSchemeLinks(document); });
     safe('focusView', function () { focusView(container); });
     safe('announce', function () { announce(document.title); });
 
