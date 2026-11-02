@@ -28,6 +28,8 @@ When you activate Proto-theme, WordPress will display a **"Install Required Plug
 
 Click "Begin installing plugins", check all items, and choose "Install". After installation the notice will resolve automatically.
 
+> **Note on Safe SVG:** it enables SVG uploads for every role with `upload_files` (Author and up). Restrict it to administrators in its settings page unless lower roles genuinely need to upload SVGs.
+
 > **Note on Wordfence:** It is marked recommended rather than required. You can safely skip it during local development and install it only on staging/production environments.
 
 ---
@@ -417,27 +419,29 @@ The theme registers a custom SVG favicon from `assets/img/favicon.svg`, bypassin
 
 ## Updating Proto-Blocks
 
-Proto-theme automatically resolves the **latest Proto-Blocks release** at install time. The function `proto_protoblocks_zip_url()` in `inc/proto-required-plugins.php` calls the GitHub Releases API (`/releases/latest`) to fetch the current release's `.zip` download URL, then caches it in a 12-hour WordPress transient.
+Proto-theme automatically resolves the **latest Proto-Blocks release** at install time. `proto_protoblocks_release()` in `inc/proto-required-plugins.php` calls the GitHub Releases API (`/releases/latest`), picks the release's `proto-blocks-<version>.zip` asset, and caches the result in a WordPress transient.
 
 **How it works:**
 
-1. On first load (or after the transient expires), the theme queries `https://api.github.com/repos/GustavoGomez092/Proto-Blocks/releases/latest`.
-2. It extracts the first `.zip` asset URL from the response and stores it as the `proto_protoblocks_zip_url` transient (TTL: 12 hours).
-3. TGMPA reads this URL as the plugin `source` when offering installation.
-4. If the API is unreachable (rate limit, no network), the function returns a **pinned fallback URL** hard-coded in the file.
+1. On a screen that can install plugins (the TGMPA page, Plugins, Updates) with an empty cache, the theme queries `https://api.github.com/repos/GustavoGomez092/Proto-Blocks/releases/latest` (5-second timeout). Other admin pages never wait on GitHub.
+2. Only an asset at `https://github.com/GustavoGomez092/Proto-Blocks/releases/download/v<ver>/proto-blocks-<ver>.zip` is accepted; its URL, version and sha256 `digest` are stored in the `proto_protoblocks_release` transient (12 hours after a successful lookup, 1 hour after a failed one).
+3. TGMPA reads the URL as the plugin `source`. When the archive is downloaded, an `upgrader_pre_download` filter verifies its sha256 against the release digest (or the `.zip.sha256` sidecar asset) and refuses to install on a mismatch.
+4. If the API is unreachable (rate limit, no network) or returns nothing acceptable, the theme uses a **pinned fallback** (URL + sha256) hard-coded in the file.
 
-**Refreshing the cached URL** — if you need the latest release URL to resolve immediately (e.g., after a new Proto-Blocks release), delete the transient from the WordPress admin under Tools → Scheduled Tasks, or run:
+**Refreshing the cached release** — if you need the latest release to resolve immediately (e.g., after a new Proto-Blocks release), run:
 
 ```bash
-wp transient delete proto_protoblocks_zip_url
+wp transient delete proto_protoblocks_release
 ```
 
-The next page load will re-query the API and cache the new URL.
+The next visit to the install screen will re-query the API and cache the new release.
 
-**Updating the pinned fallback** — open `inc/proto-required-plugins.php` and update the `$fallback` variable to the latest release zip URL:
+**Updating the pinned fallback** — open `inc/proto-required-plugins.php` and update `proto_protoblocks_fallback_release()` with the latest release zip URL and its sha256 (the `digest` shown by `gh release view vX.Y.Z --json assets`, or the contents of the `.zip.sha256` asset):
 
 ```php
-$fallback = 'https://github.com/GustavoGomez092/Proto-Blocks/releases/download/vX.Y.Z/proto-blocks-X.Y.Z.zip';
+'version' => 'X.Y.Z',
+'url'     => 'https://github.com/GustavoGomez092/Proto-Blocks/releases/download/vX.Y.Z/proto-blocks-X.Y.Z.zip',
+'sha256'  => '<64 hex characters>',
 ```
 
 **Pinning a specific version** — to freeze the theme to a particular Proto-Blocks release (useful for stability on production), replace the `source` value in `proto_register_required_plugins()` with a direct, version-pinned URL:
@@ -457,7 +461,7 @@ Proto-theme ships two GitHub Actions workflows in `.github/workflows/`:
 - `deploy-wpengine-development.yml` — triggers on every push to the `development` branch.
 - `deploy-wpengine-production.yml` — **manual only** (`workflow_dispatch`); never auto-deploys to production.
 
-Both workflows strip development files (`docs/`, `README.md`, `.gitignore`, `.git/`, `.github/`) before the rsync transfer, so the server receives only theme files.
+Both workflows deploy from a `git archive` of the commit rather than from the raw checkout, so everything marked `export-ignore` in `.gitattributes` (`.github/`, `docs/`, `tests/`, `package.json`, `package-lock.json`, `playwright.config.js`, the `proto-blocks/taxi-fixture-*` test blocks, `README.md`, dotfiles) stays out — the same list the release zip uses. Only tracked theme files reach the server; untracked local files and `.git/` never do. The rsync `--delete` is scoped to `REMOTE_PATH` (the theme folder); do not shorten that path.
 
 ### Setup steps
 

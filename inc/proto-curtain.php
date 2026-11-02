@@ -116,8 +116,54 @@ add_action('wp_enqueue_scripts', function (): void {
         true
     );
 
-    wp_localize_script('proto-curtain', 'protoCurtainSettings', proto_curtain_settings());
+    // Inline JSON rather than wp_localize_script: localize casts every value
+    // to a string after html_entity_decode() (so `false` becomes "" and the
+    // script's `!== false` checks never see it) and encodes without
+    // JSON_HEX_TAG. The HEX flags make `</script>` impossible whatever a
+    // fork's filter feeds in.
+    wp_add_inline_script(
+        'proto-curtain',
+        'var protoCurtainSettings = ' . wp_json_encode(
+            proto_curtain_settings(),
+            JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT
+        ) . ';',
+        'before'
+    );
 }, 20);
+
+/**
+ * A curtain colour safe to print inside `style=""`: a hex colour, or a CSS
+ * custom property reference (`var(--brand)`). Anything else falls back.
+ */
+function proto_curtain_css_color(string $color, string $fallback = '#000000'): string
+{
+    $hex = sanitize_hex_color(trim($color));
+    if (is_string($hex) && $hex !== '') {
+        return $hex;
+    }
+    if (preg_match('/^var\(--[A-Za-z0-9_-]+\)$/', trim($color))) {
+        return trim($color);
+    }
+
+    return $fallback;
+}
+
+/**
+ * A mark width safe to print inside `style=""`: lengths, percentages and the
+ * math functions (`min(180px, 38vw)`, `clamp(...)`) — no `;`, `:`, `/`, quotes
+ * or `url(`. esc_attr() alone leaves `;` and `(` intact, which is how a
+ * "width" becomes a background-image declaration.
+ */
+function proto_curtain_css_width(string $width, string $fallback = 'min(180px, 38vw)'): string
+{
+    $width = trim($width);
+    if ($width !== '' && strlen($width) <= 64 && preg_match('/^[A-Za-z0-9 .,%()+*-]+$/', $width)
+        && stripos($width, 'url') === false && stripos($width, 'expression') === false) {
+        return $width;
+    }
+
+    return $fallback;
+}
 
 /**
  * Paint the curtain closed before anything else renders, for `firstLoad`.
@@ -138,8 +184,10 @@ add_action('wp_body_open', function (): void {
         return;
     }
 
+    // Values land inside style="" — validate, do not merely escape.
     $panels = max(1, (int) $settings['panels']);
-    $color  = (string) $settings['color'];
+    $color  = proto_curtain_css_color((string) $settings['color']);
+    $width  = proto_curtain_css_width((string) $settings['markWidth']);
     $mark   = (string) $settings['mark'];
     ?>
 <div class="proto-curtain" data-proto-curtain-initial aria-hidden="true"
@@ -151,7 +199,7 @@ add_action('wp_body_open', function (): void {
     </div>
     <?php if ($mark !== '') : ?>
         <img src="<?php echo esc_url($mark); ?>" alt="" aria-hidden="true"
-             style="position:absolute;top:50%;left:50%;width:<?php echo esc_attr((string) $settings['markWidth']); ?>;height:auto;transform:translate(-50%,-50%)" />
+             style="position:absolute;top:50%;left:50%;width:<?php echo esc_attr($width); ?>;height:auto;transform:translate(-50%,-50%)" />
     <?php endif; ?>
 </div>
     <?php

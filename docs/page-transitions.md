@@ -136,3 +136,79 @@ Three guards:
 Without GSAP the curtain still covers and uncovers, just instantly — a missing
 library degrades to a plain curtain rather than to no curtain. Under
 `prefers-reduced-motion` it covers and clears with no animation.
+
+## Security
+
+Taxi fetches the next page with the reader's cookies, parses it, and moves part
+of it into the live document. `scripts/proto-taxi.js` puts three guards around
+that, all at the integration layer; the vendored `taxi.umd.js` is untouched.
+
+### What is stripped from a fetched document
+
+Taxi parses responses with `DOMParser`, which runs with scripting *disabled*,
+so the contents of every `<noscript>` come back as real elements rather than
+the inert text a full load sees. Before Taxi reads anything out of the parsed
+document — the view, the scripts to re-run, the stylesheets to carry over —
+every `<noscript>` element is removed. Nothing is lost: by definition none of
+it applies to a reader running this script.
+
+The view is then moved into the page as nodes (`document.importNode`), not
+through the stock renderer's `outerHTML` → `innerHTML` round trip, so the
+markup is parsed exactly once, by the browser's own parser, the same way a full
+load parses it. Stylesheets are carried over from anywhere in the fetched
+document except inside `<noscript>` or `<template>`; they are not restricted to
+`<head>` because WordPress prints stylesheets enqueued during render at
+`wp_footer`.
+
+`assets/js/proto-reveal-guard.js` removes a promoted no-JS fallback `<style>`
+if one ever appears. With the strip above it should never fire; it stays as a
+second line for a fork that swaps in its own Core or renderer.
+
+### Which links are left alone
+
+The following never start a transition and are never prefetched on hover or
+focus. They navigate as plain links, with a full page load:
+
+- `[data-taxi-ignore]`, `[download]`, `[target]`, `rel="nofollow"`,
+  hash-only `href="#…"`, `mailto:` and `tel:`, links inside `#wpadminbar`,
+  `.add_to_cart_button` and `.wc-block-components-product-button a`;
+- any link whose URL contains `_wpnonce=`, `add-to-cart=`, `?action=`,
+  `&action=`, `remove_item=`, `customer-logout`, `/wp-admin` or `wp-login`.
+
+The URL list exists because WordPress protects state-changing GETs with a nonce
+carried in the link itself. A hover prefetch of such a link is the action: it
+sends the cookies and a valid nonce, so WooCommerce's "Log out" endpoint would
+log the reader out the moment they mouse over or tab onto it.
+
+The list is one array, `window.protoTaxi.ignoreHrefPatterns`, and one
+predicate, `window.protoTaxi.isExcludedLink(anchor)`, consulted by both the
+click intercept and the prefetch handler. Push to the array to exclude more at
+runtime, or hand the whole list over from PHP:
+
+```php
+wp_localize_script('proto-taxi-init', 'protoTaxiSettings', [
+    'ignoreHrefPatterns' => ['_wpnonce=', 'add-to-cart=', '?action=', '&action=', 'remove_item=', 'customer-logout', '/wp-admin', 'wp-login', 'my-plugin-action='],
+]);
+```
+
+A localised array replaces the built-in list; a malformed one falls back to it.
+
+### Opting a single link out
+
+Add `data-taxi-ignore` to the anchor:
+
+```html
+<a href="/members/export/" data-taxi-ignore>Export my data</a>
+```
+
+Links to the WooCommerce cart, checkout, my-account and shop pages get the
+attribute server-side (`proto_taxi_ignore_urls`).
+
+### Unknown transitions and the watchdog
+
+`<a data-transition="…">` naming a transition that was never registered uses
+the default one; KSES allows `data-*` attributes for every role, so this is
+content, not a developer error, and must not stall navigation. Independently,
+a navigation that has not finished within 10 seconds (`protoTaxiSettings.watchdogMs`
+to change it) has its transitioning state reset so later clicks work again; the
+failure is logged.

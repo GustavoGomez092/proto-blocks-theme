@@ -32,6 +32,12 @@
  *
  * Readers genuinely without JavaScript are unaffected: this never runs for
  * them, and their <noscript> still applies.
+ *
+ * Since the Taxi integration started stripping every <noscript> from a
+ * fetched document before Taxi reads it (scripts/proto-taxi.js,
+ * stripInertMarkup) and filtering noscript stylesheets out of the carry-over,
+ * the promotion above no longer happens and this guard should never fire. It
+ * stays as a second line for a fork that swaps in its own Core or renderer.
  */
 (function () {
 	'use strict';

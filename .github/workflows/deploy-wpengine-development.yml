@@ -4,35 +4,54 @@ on:
   push:
     branches: [development]
 
+# The job never writes to the repository; keep GITHUB_TOKEN read-only so a
+# compromised third-party action cannot push, tag or edit releases.
+permissions:
+  contents: read
+
+# One deploy at a time per environment: two overlapping `rsync --delete`
+# runs against the same directory leave the install in a mixed state. A
+# newer push supersedes a queued/in-flight dev deploy.
+concurrency:
+  group: deploy-wpengine-development
+  cancel-in-progress: true
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # No build step: this theme ships its source as-is. Tailwind is
       # compiled on the server by the Proto-Blocks plugin (it reads
       # tailwind-theme.css), so there is nothing to bundle here -- the
       # deploy is a straight file transfer.
 
-      - name: Remove development-only files before deploy
+      # Deploy from a `git archive` of the commit, not from the checkout, so
+      # the export-ignore rules in .gitattributes (tests/, package*.json,
+      # playwright.config.js, docs/, .github/, README.md, the taxi-fixture
+      # test blocks, dotfiles) govern this channel exactly as they govern the
+      # release zip. Only tracked files reach the server; .git never does.
+      - name: Build deploy tree from git archive
         run: |
-          rm -rf .git
-          rm -rf .github
-          rm -rf docs
-          rm -f README.md
-          rm -f .gitignore
-          rm -f .DS_Store
-          find . -name ".DS_Store" -delete
-          find . -name "*.log" -delete
+          set -euo pipefail
+          rm -rf _deploy
+          mkdir _deploy
+          git archive --format=tar HEAD | tar -x -C _deploy
+          echo "Deploying $(find _deploy -type f | wc -l) files:"
+          find _deploy -maxdepth 2 | sort
 
+      # REMOTE_PATH is the theme folder only; `--delete` is scoped to it.
+      # Never shorten REMOTE_PATH to wp-content/themes or wp-content -- with
+      # --delete that would remove every other theme/plugin/upload.
       - name: Deploy to WP Engine
-        uses: wpengine/github-action-wpe-site-deploy@v3
+        uses: wpengine/github-action-wpe-site-deploy@996a3648a51f37dd54078741f46257fe9610a82c # v3.2.10
         with:
           WPE_SSHG_KEY_PRIVATE: ${{ secrets.WPE_SSHG_KEY_PRIVATE }}
           WPE_ENV: YOUR_DEV_INSTALL_NAME
+          SRC_PATH: _deploy/
           REMOTE_PATH: wp-content/themes/proto-theme
           FLAGS: -azvr --inplace --delete --exclude=".*"
           CACHE_CLEAR: TRUE
