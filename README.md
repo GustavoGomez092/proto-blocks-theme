@@ -333,6 +333,9 @@ npm test
 ```
 
 Point at another site with `PROTO_BASE_URL=https://example.test npm test`.
+`tests/e2e/nav-state.spec.js` is the exception: it serves its own two-page
+fixture through route interception with the theme's scripts, so it runs
+without a WordPress site (`npx playwright test tests/e2e/nav-state.spec.js`).
 The `tests/`, `playwright.config.js`, `package.json` and `package-lock.json`
 paths are all `export-ignore`d — none of this ships in the release zip built
 by `git archive`.

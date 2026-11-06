@@ -457,21 +457,33 @@
   }
 
   /**
-   * The header template part never re-renders, so WordPress's
-   * current-menu-item classes would stay pinned to the first page loaded.
+   * The header and footer template parts never re-render, so WordPress's
+   * current-menu-item classes and aria-current="page" would stay pinned to
+   * the first page loaded.
    *
-   * Compares origin as well as pathname: an external link (e.g. a footer
-   * link to a sister site) whose path happens to match the current page's
-   * path must not be marked current. `link.href` is a browser-resolved
-   * absolute URL for a plain <a>. An SVG <a> element's `.href` is an
-   * SVGAnimatedString rather than a string, but `new URL()` still accepts
-   * it — it gets coerced to a string and resolves fine against this page's
-   * https: origin (it only throws "Invalid URL" against an opaque base
-   * like about:blank, which this function never uses) — so that is not a
-   * throw risk here. This function is still wrapped in `safe()` at its
-   * caller (see the NAVIGATE_IN handler below) as defense-in-depth, same
-   * as every other sync step in this file — not because of a known bug in
-   * this particular function. (For a real, verified example of the kind of
+   * Every link in the header and footer takes part, not only the ones in
+   * core/navigation blocks: the site-logo and site-title links point at the
+   * home page too, and assistive tech expects aria-current="page" on each
+   * link to the page being viewed. Core's menu classes stay on navigation
+   * items only. Admin-bar links are left alone.
+   *
+   * A link is current when it is an http(s) URL on this origin whose path
+   * (trailing slashes ignored) is the page's path. Origin is compared as
+   * well as pathname: an external link (e.g. a footer link to a sister
+   * site) whose path happens to match the current page's path must not be
+   * marked current. A link with a fragment (`/about/#team`,
+   * `#cookie-settings`) points inside a page, not at one, so it is never
+   * current, even on that page.
+   *
+   * `link.href` is a browser-resolved absolute URL for a plain <a>. An SVG
+   * <a> element's `.href` is an SVGAnimatedString rather than a string, but
+   * `new URL()` still accepts it — it gets coerced to a string and resolves
+   * fine against this page's https: origin (it only throws "Invalid URL"
+   * against an opaque base like about:blank, which this function never
+   * uses). isCurrentPage() still catches a throw so one odd link cannot
+   * stop the others from syncing, and the whole function is wrapped in
+   * `safe()` at its callers as defense-in-depth, same as every other sync
+   * step in this file. (For a real, verified example of the kind of
    * failure `safe()` guards against, see killScrollTriggersIn() below: a
    * ScrollTrigger whose trigger selector matched nothing leaves a bare
    * string where an Element is expected, and container.contains() on it
@@ -481,27 +493,48 @@
     var target = new URL(url, window.location.href);
     var hereOrigin = target.origin;
     var here = target.pathname.replace(/\/+$/, '');
-    var links = document.querySelectorAll('.wp-block-navigation a[href]');
+    var links = document.querySelectorAll(
+      'header a[href], footer a[href], .wp-block-navigation a[href]'
+    );
 
     for (var i = 0; i < links.length; i++) {
       var link = links[i];
-      var parent = link.parentElement;
-      var there = new URL(link.href, window.location.href);
-      var isCurrent = there.origin === hereOrigin &&
-        there.pathname.replace(/\/+$/, '') === here;
+      if (link.closest('#wpadminbar')) continue;
 
-      link.classList.toggle('current-menu-item', isCurrent);
+      var isCurrent = isCurrentPage(link, hereOrigin, here);
+
       if (isCurrent) {
         link.setAttribute('aria-current', 'page');
       } else {
         link.removeAttribute('aria-current');
       }
 
+      if (!link.closest('.wp-block-navigation')) continue;
+
+      link.classList.toggle('current-menu-item', isCurrent);
+      var parent = link.parentElement;
       if (parent && parent.classList.contains('wp-block-navigation-item')) {
         parent.classList.toggle('current-menu-item', isCurrent);
         parent.classList.toggle('current_page_item', isCurrent);
       }
     }
+  }
+
+  /** True when `link` points at the page at `here` on `hereOrigin` (see syncNavState). */
+  function isCurrentPage(link, hereOrigin, here) {
+    var attr = link.getAttribute('href') || '';
+    if (attr.indexOf('#') !== -1) return false;
+
+    var there;
+    try {
+      there = new URL(link.href, window.location.href);
+    } catch (e) {
+      return false;
+    }
+    if (there.protocol !== 'http:' && there.protocol !== 'https:') return false;
+
+    return there.origin === hereOrigin &&
+      there.pathname.replace(/\/+$/, '') === here;
   }
 
   /** Keep the admin bar's "Edit" link pointing at the page being viewed. */
@@ -724,6 +757,9 @@
   /* The initial page load gets the same event, so block code has exactly one
      contract to write against. */
   function readyOnLoad() {
+    /* A direct load gets the same nav state as a Taxi arrival: core marks
+       its own navigation items, not the site-logo or site-title links. */
+    safe('syncNavState', function () { syncNavState(window.location.href); });
     dispatch('proto:page-ready', {
       container: liveView(),
       url: window.location.href
