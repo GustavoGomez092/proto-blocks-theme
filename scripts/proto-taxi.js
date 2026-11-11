@@ -403,10 +403,24 @@
      footer is still parsing when this script is not deferred by a consent
      manager: scripts printed after it (a form plugin's footer init at
      wp_footer 999) would be missing from the copy served on back/forward.
-     Re-clone once the page has loaded. */
-  window.addEventListener('load', function () {
+     Re-clone the moment parsing finishes (readyState "interactive"): every
+     parser-inserted tag is in the DOM, and no DOMContentLoaded handler has
+     run yet, so the copy holds the authored markup. Cloning later (on
+     load) captured the motion runtime's in-flight state instead: split
+     headings with their from-state transforms, which a later init split
+     again and left clipped on back/forward into the landing page. */
+  function refreshInitialCache() {
     safe('updateCache', function () { core.updateCache(); });
-  });
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('readystatechange', function onReady() {
+      if (document.readyState === 'loading') return;
+      document.removeEventListener('readystatechange', onReady);
+      refreshInitialCache();
+    });
+  } else {
+    refreshInitialCache();
+  }
 
   window.protoTaxi = {
     core: core,

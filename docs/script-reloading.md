@@ -116,9 +116,14 @@ so nothing runs twice.
    settled; `proto:page-ready` fires after it (Taxi's `NAVIGATE_END` waits
    for the same settle). Both carry `{ container, url }`.
 7. **First document.** Taxi clones the first document when it boots, which is
-   mid-parse when `proto-taxi.js` is not deferred; the clone is refreshed on
-   `load` so back/forward to the landing page carries the scripts printed
-   after the theme's own (a form plugin's footer init at `wp_footer` 999).
+   mid-parse when `proto-taxi.js` is not deferred; the clone is refreshed the
+   moment parsing finishes (`readyState` `interactive`, before any
+   `DOMContentLoaded` handler) so back/forward to the landing page carries
+   the scripts printed after the theme's own (a form plugin's footer init at
+   `wp_footer` 999) and still holds the authored markup: a later snapshot
+   would capture the motion runtime's in-flight state (split headings with
+   their from-state transforms), which re-splits and stays clipped on
+   back/forward.
 
 ## Consent managers
 
