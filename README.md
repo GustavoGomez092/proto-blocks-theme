@@ -137,11 +137,32 @@ console.
 
 ### Writing blocks that survive a swap
 
-A block's `view.js` is re-executed automatically on every navigation — the
-theme stamps `data-taxi-reload` onto any enqueued `<script>` tag whose handle
-starts with `proto-blocks-` (Proto-Blocks' per-block script prefix), and
-Taxi's default `reloadJsFilter` re-runs any script tagged that way. Plain
-IIFE blocks need no changes.
+Nothing in a fetched page runs unless its `<script>` tag carries
+`data-taxi-reload`. The theme stamps that attribute by rule
+(`proto_taxi_reload_rules` in `inc/proto-taxi.php`) and re-runs the marked
+tags itself, in document order (`reloadScripts()` in `scripts/proto-taxi.js`;
+Taxi's own loader is off). Two modes:
+
+- `data-taxi-reload` (**rerun**): the file executes again on every
+  navigation. A block's `view.js` gets this by default (handle
+  `proto-blocks-{name}`). Plain IIFE blocks need no changes, but they must be
+  idempotent: bind `document` listeners once behind a flag, clean up on
+  `proto:page-leave`.
+- `data-taxi-reload="once"` (**once**): the file is loaded when the document
+  does not hold it yet, then kept. For libraries that bind themselves once
+  (jQuery, a form plugin's runtime). A rule with `deps` walks the handle's
+  dependency chain; conflicts resolve to `once`; `jquery*` can never be rerun.
+
+Inline tags WordPress prints for a covered handle (localized data,
+before/after scripts) always re-run. Files are fetched in parallel (preload
+hints the moment the HTML arrives, prefetch on hover) and executed in order;
+an inline script waits for every file printed before it; the new view stays
+`inert` and hidden until the chain settled (4 s cap), and
+`proto:scripts-ready` fires before `proto:page-ready`. A `once` library whose
+version changed since the document loaded makes the page load in full.
+Gravity Forms works out of the box (`inc/proto-gravity-forms.php`, the
+template for other plugins). The full contract, the consent-manager policy
+and the plugin recipe: [docs/script-reloading.md](docs/script-reloading.md).
 
 Two cases need the lifecycle event instead:
 
@@ -281,8 +302,11 @@ the current navigation before touching the document.
 | Filter | Purpose |
 |---|---|
 | `proto_taxi_enabled` | Master switch. `add_filter('proto_taxi_enabled', '__return_false');`. Always `false` in `wp-admin` and on JSON requests, regardless of the filter. |
-| `proto_taxi_reload_handles` | Extra script handles (beyond the `proto-blocks-` prefix) to mark `data-taxi-reload`. Empty by default. |
-| `proto_taxi_denied_handles` | Handles that must never be re-run. Defaults to the theme's own animation/runtime scripts (`proto-gsap`, `proto-split-text`, `proto-scroll-trigger`, `proto-lottie`, `proto-lenis`, `proto-taxi-e`, `proto-taxi`, `proto-taxi-init`, `proto-init`, `proto-intro`) — re-running any of these would create a second Lenis instance, RAF loop or Taxi Core. The deny list wins over the `proto-blocks-` prefix. |
+| `proto_taxi_reload_rules` | Script reload rules: `['prefix' => 'gform_', 'mode' => 'once', 'deps' => true]` or `['handle' => 'my-lib', ...]`; `mode` is `rerun` (default) or `once`, `deps` (default `true`) gives the dependency chain the same mode. Built in: `proto-blocks-` prefix as `rerun` without deps. See [docs/script-reloading.md](docs/script-reloading.md). |
+| `proto_taxi_reload_handles` | Legacy form: extra handles re-run on every navigation (a `rerun` rule without deps). Empty by default. |
+| `proto_taxi_reload_inline_patterns` | Substrings that mark an inline script printed through `wp_get_inline_script_tag()` for re-running. Last resort; prefer the plugin's own output filter. Empty by default. |
+| `proto_taxi_once_only_handles` | Handles that are never rerun whatever rule reaches them (`jquery`, `jquery-core`, `jquery-migrate`, `wp-polyfill`): a rule naming them gets `once`. |
+| `proto_taxi_denied_handles` | Handles that must never be re-run. Defaults to the theme's own animation/runtime scripts (`proto-gsap`, `proto-split-text`, `proto-scroll-trigger`, `proto-lottie`, `proto-lenis`, `proto-taxi-e`, `proto-taxi`, `proto-taxi-init`, `proto-init`, `proto-intro`) — re-running any of these would create a second Lenis instance, RAF loop or Taxi Core. The deny list wins over every rule; handles ending in `-view-script` (core's copy of a `block.json` `viewScript`) are skipped too. |
 | `proto_taxi_ignore_urls` | Extra URLs whose links get `data-taxi-ignore`. Defaults to the WooCommerce cart/checkout/my-account/shop permalinks when WooCommerce is active, otherwise empty. See "Routes this integration doesn't cover" above for why `shop` is included. |
 
 ### Upgrading Taxi

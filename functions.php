@@ -5,6 +5,7 @@
 
 require_once get_stylesheet_directory() . '/inc/proto-required-plugins.php';
 require_once get_stylesheet_directory() . '/inc/proto-taxi.php';
+require_once get_stylesheet_directory() . '/inc/proto-gravity-forms.php'; // Gravity Forms scripts survive Taxi swaps. Inert unless GF is active.
 require_once get_stylesheet_directory() . '/inc/proto-yoast-jsonld.php'; // Inert unless Yoast SEO is active.
 require_once get_stylesheet_directory() . '/inc/proto-curtain.php';
 require_once get_stylesheet_directory() . '/inc/proto-reveal.php';

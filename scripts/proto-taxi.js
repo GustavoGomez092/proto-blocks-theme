@@ -230,19 +230,31 @@
       });
     }
 
+    /* The new view is shown only once its scripts have executed (see
+       "Script reloading" below), so a form or widget is never on screen
+       before the runtime it needs; a slow network is capped so the page
+       still appears. The fade starts from opacity 0 either way; with
+       reduced motion the view is kept hidden for the hold instead. */
     onEnter(props) {
       safe('resetScroll', resetScroll);
 
       var el = animTarget(props.to);
       if (reduced.matches || !window.gsap || !el) {
-        props.done();
+        if (el) el.style.visibility = 'hidden';
+        scriptsSettled().then(function () {
+          if (el) el.style.visibility = '';
+          props.done();
+        });
         return;
       }
-      window.gsap.fromTo(
-        el,
-        { opacity: 0 },
-        { opacity: 1, duration: 0.5, ease: 'power2.out', onComplete: props.done }
-      );
+      window.gsap.set(el, { opacity: 0 });
+      scriptsSettled().then(function () {
+        window.gsap.fromTo(
+          el,
+          { opacity: 0 },
+          { opacity: 1, duration: 0.5, ease: 'power2.out', onComplete: props.done }
+        );
+      });
     }
   };
 
@@ -360,15 +372,40 @@
         this.protoWatchdog = null;
       }
     }
+
+    /* Runs the moment a page's HTML arrives: hover/focus prefetch and the
+       navigation fetch alike (and the boot clone, skipped). The files its
+       marked scripts need are hinted right away, so by the time the loader
+       inserts them in order they come from the cache (see "Script
+       reloading" below): prefetch for a hover, preload for a navigation. */
+    createCacheEntry(page, url) {
+      var entry = super.createCacheEntry(page, url);
+      if (this.currentCacheEntry && entry && entry.page) {
+        var rel = this.isTransitioning ? 'preload' : 'prefetch';
+        safe('hintScripts', function () { hintScripts(entry.page, rel); });
+      }
+      return entry;
+    }
   };
 
   var core = new ProtoCore({
     links: LINKS,
     transitions: { default: ProtoFade },
     renderers: { default: ProtoRenderer },
-    reloadCssFilter: isLiveStylesheet
-    // reloadJsFilter is left at its default: only [data-taxi-reload] scripts
-    // are re-run. inc/proto-taxi.php decides which tags carry it.
+    reloadCssFilter: isLiveStylesheet,
+    // Taxi's own script loader is off: reloadScripts() above re-runs the
+    // [data-taxi-reload] scripts in document order instead. inc/proto-taxi.php
+    // decides which tags carry the attribute.
+    reloadJsFilter: function () { return false; }
+  });
+
+  /* Taxi clones the first document when it boots, which is while the
+     footer is still parsing when this script is not deferred by a consent
+     manager: scripts printed after it (a form plugin's footer init at
+     wp_footer 999) would be missing from the copy served on back/forward.
+     Re-clone once the page has loaded. */
+  window.addEventListener('load', function () {
+    safe('updateCache', function () { core.updateCache(); });
   });
 
   window.protoTaxi = {
@@ -713,11 +750,264 @@
   }
   safe('sameSchemeLinks', function () { sameSchemeLinks(document); });
 
+  /* ----------------------------------------------------------------------
+     Script reloading.
+
+     Taxi's own loader appends every [data-taxi-reload] script of the fetched
+     page at once. A dynamically inserted <script src> is async by default,
+     so a chain such as jQuery -> plugin runtime -> inline config -> inline
+     init executes in whatever order the network answers, and a plugin like
+     Gravity Forms breaks on the first navigation into its page. This loader
+     keeps document order: external files are fetched in parallel (a preload
+     hint each, prefetched already when the link was hovered) but execute in
+     order (async = false), and an inline script waits for every file
+     printed before it. The transition shows the new view only once the
+     chain has settled (scriptsSettled(), capped by SCRIPTS_HOLD_MS).
+
+     inc/proto-taxi.php decides which tags carry the attribute and in which
+     mode (see proto_taxi_reload_rules there):
+       data-taxi-reload          rerun: re-executed on every navigation
+                                 (block view.js, inline config and init).
+       data-taxi-reload="once"   once: loaded when the document does not
+                                 hold that script yet, then kept (libraries
+                                 that bind themselves once: jQuery, a form
+                                 plugin's runtime). Matched by WordPress's
+                                 `{handle}-js` id, else by src; the same id
+                                 with another src means the deploy changed
+                                 the file and the page is loaded in full
+                                 (a document cannot hold two versions of a
+                                 library).
+     A live tag identical to the fetched one, or carrying the same id, is
+     replaced in place, so a slot keeps one copy per visit. Clones keep the
+     consent state of the tag they replace: one the consent manager blocked
+     on the full load stays blocked; otherwise they are marked
+     data-cookieconsent="ignore", because a manager in auto-blocking mode
+     (Cookiebot) retypes inserted scripts and re-inserts its own copies,
+     which drops the in-order flag and the load handler. ES modules are
+     skipped (they evaluate once per URL; use proto:page-ready). Taxi's
+     loader is disabled (reloadJsFilter returns false, Core options below)
+     so nothing runs twice. `proto:scripts-ready` fires on document once
+     every script of the new page has executed; `proto:page-ready` follows.
+     ------------------------------------------------------------------- */
+
+  var SCRIPT_LOAD_TIMEOUT_MS = 10000;
+  var SCRIPTS_HOLD_MS = 4000;
+  var scriptsPromise = Promise.resolve();
+  var moduleWarned = false;
+
+  /** Resolves when the current navigation's scripts have run, or after the hold cap. */
+  function scriptsSettled() {
+    return Promise.race([
+      scriptsPromise,
+      new Promise(function (resolve) { setTimeout(resolve, SCRIPTS_HOLD_MS); })
+    ]);
+  }
+
+  function scriptType(node) {
+    return (node.getAttribute('type') || '').trim().toLowerCase();
+  }
+
+  function isJavaScript(node) {
+    var type = scriptType(node);
+    return type === '' || type === 'text/javascript' || type === 'application/javascript';
+  }
+
+  function cloneScript(node, twin) {
+    var el = document.createElement('script');
+    /* Ordered queue: force-async off before any attribute lands. The
+       original's async/defer would take the clone out of the queue (they
+       describe parser behaviour that does not apply to an inserted tag). */
+    el.async = false;
+    for (var i = 0; i < node.attributes.length; i++) {
+      var name = node.attributes[i].name;
+      if (name === 'async' || name === 'defer') continue;
+      el.setAttribute(name, node.attributes[i].value);
+    }
+    var consent = twin ? twin.getAttribute('data-cookieconsent') : null;
+    if (twin && scriptType(twin) === 'text/plain' && consent && consent !== 'ignore') {
+      el.setAttribute('type', 'text/plain');
+      el.setAttribute('data-cookieconsent', consent);
+    } else if (!el.hasAttribute('data-cookieconsent')) {
+      el.setAttribute('data-cookieconsent', 'ignore');
+    }
+    if (node.textContent) {
+      el.textContent = node.textContent;
+    }
+    /* The clone's markup differs from the fetched tag (consent attribute),
+       so it remembers the markup it came from for the next twin search. */
+    el.__protoSource = node.outerHTML;
+    return el;
+  }
+
+  /* The live tag a fetched one replaces: the identical tag (an inert copy
+     imported with the view, or the same tag left by an earlier visit), else
+     the tag with the same id outside the wrapper (WordPress ids such as
+     `gform_gravityforms-js-extra`: the same slot, new values). */
+  function findTwin(live, node) {
+    var i;
+    for (i = 0; i < live.length; i++) {
+      if (live[i].outerHTML === node.outerHTML || live[i].__protoSource === node.outerHTML) {
+        return live.splice(i, 1)[0];
+      }
+    }
+    if (node.id) {
+      for (i = 0; i < live.length; i++) {
+        if (live[i].id === node.id && !live[i].closest('[data-taxi]')) {
+          return live.splice(i, 1)[0];
+        }
+      }
+    }
+    return null;
+  }
+
+  function placeScript(el, node, twin) {
+    if (twin && twin.parentNode) {
+      twin.parentNode.replaceChild(el, twin);
+      return;
+    }
+    var inHead = node.parentNode && node.parentNode.tagName === 'HEAD';
+    (inHead ? document.head : document.body).appendChild(el);
+  }
+
+  function loadPromise(el, src) {
+    return new Promise(function (resolve) {
+      var timer = setTimeout(function () {
+        console.warn('[proto-taxi] Script did not settle in time, continuing:', src);
+        resolve();
+      }, SCRIPT_LOAD_TIMEOUT_MS);
+      el.onload = el.onerror = function () { clearTimeout(timer); resolve(); };
+    });
+  }
+
+  var hinted;
+  function hint(rel, href) {
+    hinted = hinted || {};
+    if (hinted[href]) return;
+    hinted[href] = true;
+    var link = document.createElement('link');
+    link.rel = rel;
+    link.as = 'script';
+    link.href = href;
+    document.head.appendChild(link);
+  }
+
+  /* Scripts that ran in this document: everything outside the Taxi wrapper
+     (scripts inside it are the inert copies imported with a view). */
+  var ranSrc;
+  function executedScripts() {
+    var byId = {}, bySrc = {};
+    Array.prototype.forEach.call(document.querySelectorAll('script[src]'), function (s) {
+      if (s.closest('[data-taxi]')) return;
+      if (s.id) byId[s.id] = s;
+      bySrc[s.src] = s;
+    });
+    /* Files this loader inserted (some end up inside a view's slot). */
+    for (var src in (ranSrc || {})) {
+      if (!bySrc[src]) bySrc[src] = ranSrc[src];
+    }
+    return { byId: byId, bySrc: bySrc };
+  }
+
+  /* The fetched page's files the loader would have to fetch: warmed on hover
+     prefetch (see core.preload below) so a click finds them in the cache. */
+  function hintScripts(page, rel) {
+    var have = executedScripts();
+    Array.prototype.forEach.call(page.querySelectorAll('script[data-taxi-reload][src]'), function (node) {
+      if (!isJavaScript(node) || scriptType(node) === 'module') return;
+      if (node.getAttribute('data-taxi-reload') === 'once' && ((node.id && have.byId[node.id]) || have.bySrc[node.src])) return;
+      hint(rel, node.src);
+    });
+  }
+
+  function reloadScripts(page, url) {
+    var fresh = Array.prototype.slice.call(page.querySelectorAll('script[data-taxi-reload]'));
+    if (!fresh.length) {
+      return Promise.resolve();
+    }
+
+    var live = Array.prototype.slice.call(document.querySelectorAll('script[data-taxi-reload]'));
+    var have = executedScripts();
+    var planned = {};
+    var plan = [];
+
+    for (var i = 0; i < fresh.length; i++) {
+      var node = fresh[i];
+      if (scriptType(node) === 'module') {
+        if (!moduleWarned) {
+          moduleWarned = true;
+          console.warn('[proto-taxi] ES modules evaluate once per URL and are not re-run; listen for proto:page-ready instead.', node.src || node.id);
+        }
+        continue;
+      }
+      var src = node.src;
+      if (src && node.getAttribute('data-taxi-reload') === 'once') {
+        var existing = (node.id && have.byId[node.id]) || have.bySrc[src];
+        if (existing) {
+          if (existing.src !== src) {
+            console.warn('[proto-taxi] A library changed since this document loaded; loading the page in full:', node.id || src);
+            window.location.href = url;
+            return new Promise(function () {});
+          }
+          continue;
+        }
+        if (planned[src]) continue;
+        planned[src] = true;
+      }
+      plan.push({ node: node, src: src, twin: findTwin(live, node) });
+    }
+
+    var pending = [];
+    var chain = Promise.resolve();
+
+    plan.forEach(function (p) {
+      if (p.src) {
+        chain = chain.then(function () {
+          var el = cloneScript(p.node, p.twin);
+          if (isJavaScript(el)) {
+            pending.push(loadPromise(el, p.src));
+            ranSrc = ranSrc || {};
+            ranSrc[p.src] = el;
+          }
+          placeScript(el, p.node, p.twin);
+        });
+      } else {
+        chain = chain
+          .then(function () { return Promise.all(pending); })
+          .then(function () {
+            pending = [];
+            placeScript(cloneScript(p.node, p.twin), p.node, p.twin);
+          });
+      }
+    });
+
+    return chain.then(function () { return Promise.all(pending); });
+  }
+
   E.on('NAVIGATE_IN', function (payload) {
     if (!payload || !payload.to) return;
 
     var page = payload.to.page;
     var url = payload.to.finalUrl || window.location.href;
+
+    safe('reloadScripts', function () {
+      var container = payload.to.renderer ? payload.to.renderer.content : liveView();
+      /* Not interactive until its scripts ran: an inline onclick must not
+         reach a global that is still loading. */
+      if (container && 'inert' in container) container.inert = true;
+      scriptsPromise = reloadScripts(page, url)
+        .catch(function (err) { console.error('[proto-taxi] reloadScripts', err); })
+        .then(function () {
+          if (container && 'inert' in container) container.inert = false;
+          /* Clones kept consent-gated (text/plain + category) are activated
+             by the consent manager according to the stored consent. */
+          if (window.Cookiebot && typeof window.Cookiebot.runScripts === 'function') {
+            safe('Cookiebot.runScripts', function () { window.Cookiebot.runScripts(); });
+          }
+          safe('proto:scripts-ready dispatch', function () {
+            dispatch('proto:scripts-ready', { container: container, url: window.location.href });
+          });
+        });
+    });
 
     safe('syncBodyClass', function () { syncBodyClass(page); });
     safe('syncHead', function () { syncHead(page); });
@@ -734,24 +1024,29 @@
     safe('focusView', function () { focusView(container); });
     safe('announce', function () { announce(document.title); });
 
-    safe('resize', function () {
-      /* The new content changed the document height; both libraries cache it. */
-      if (window.protoLenis && typeof window.protoLenis.resize === 'function') {
-        window.protoLenis.resize();
-      }
-      if (window.ScrollTrigger) {
-        window.ScrollTrigger.refresh();
-      }
-    });
-
-    safe('proto:page-ready dispatch', function () {
-      dispatch('proto:page-ready', {
-        container: container,
-        url: window.location.href
+    /* The new page's scripts have run by now (the transition waited for
+       them); the cap in scriptsSettled() keeps this from hanging on a
+       stalled file. page-ready therefore follows scripts-ready. */
+    scriptsSettled().then(function () {
+      safe('resize', function () {
+        /* The new content changed the document height; both libraries cache it. */
+        if (window.protoLenis && typeof window.protoLenis.resize === 'function') {
+          window.protoLenis.resize();
+        }
+        if (window.ScrollTrigger) {
+          window.ScrollTrigger.refresh();
+        }
       });
-    });
 
-    safe('landOnHash', landOnHash);
+      safe('proto:page-ready dispatch', function () {
+        dispatch('proto:page-ready', {
+          container: container,
+          url: window.location.href
+        });
+      });
+
+      safe('landOnHash', landOnHash);
+    });
   });
 
   /* The initial page load gets the same event, so block code has exactly one

@@ -20,16 +20,190 @@ function proto_taxi_is_enabled(): bool
 }
 
 /**
- * Script handles whose tags get `data-taxi-reload`.
+ * Extra script handles re-run on every navigation (legacy form of a rule).
  *
- * Proto-Blocks registers every block's view.js as `proto-blocks-{name}`
- * (Registrar.php:185), so the prefix covers all blocks. The deny list is
- * checked first and returns early, so a denied handle can never be marked
- * however it matches the allow rule.
+ * Kept for back-compat: each handle becomes a `rerun` rule without
+ * dependencies. New code should use proto_taxi_reload_rules.
  */
 function proto_taxi_reload_handles(): array
 {
     return (array) apply_filters('proto_taxi_reload_handles', []);
+}
+
+/**
+ * Script reload rules.
+ *
+ * Taxi swaps the page view without a document reload, so no script of the
+ * fetched page runs unless its tag carries `data-taxi-reload`; the theme's
+ * loader (scripts/proto-taxi.js, reloadScripts()) then executes the marked
+ * tags in document order. Rules decide which enqueued handles are marked
+ * and how:
+ *
+ *   ['prefix' => 'gform_']   every handle starting with the prefix
+ *   ['handle' => 'my-lib']   one handle
+ *   'mode' => 'rerun'        (default) the file is re-executed on every
+ *                            navigation: block view.js IIFEs that set up
+ *                            whatever is in the DOM.
+ *   'mode' => 'once'         the file is loaded when no script with the
+ *                            same src is in the document yet, then kept:
+ *                            libraries that bind themselves once (jQuery,
+ *                            a form plugin's runtime). Re-running those
+ *                            would bind every handler twice.
+ *   'deps' => true           (default) the handle's dependency chain gets
+ *                            the same mode, so the library's own
+ *                            dependencies (jQuery, wp-i18n) arrive with it.
+ *
+ * The inline tags WordPress prints for a marked handle (localized data,
+ * before/after scripts, translations) are always re-run: they carry
+ * per-page values such as nonces and the current page's config.
+ *
+ * Proto-Blocks registers every block's view.js as `proto-blocks-{name}`
+ * (Registrar.php:185), so the built-in prefix rule covers all blocks. The
+ * deny list wins over every rule, so a denied handle can never be marked.
+ *
+ * Example, a plugin whose runtime must survive a swap:
+ *
+ *   add_filter('proto_taxi_reload_rules', function (array $rules) {
+ *       $rules[] = ['prefix' => 'gform_', 'mode' => 'once'];
+ *       return $rules;
+ *   });
+ */
+function proto_taxi_reload_rules(): array
+{
+    $rules = [
+        ['prefix' => 'proto-blocks-', 'mode' => 'rerun', 'deps' => false],
+    ];
+
+    foreach (proto_taxi_reload_handles() as $handle) {
+        $rules[] = ['handle' => (string) $handle, 'mode' => 'rerun', 'deps' => false];
+    }
+
+    return (array) apply_filters('proto_taxi_reload_rules', $rules);
+}
+
+/**
+ * Substrings that mark an inline script printed outside the handle system
+ * (through wp_get_inline_script_tag / wp_print_inline_script_tag) for
+ * re-running on every navigation. A plugin that prints its bootstrap or
+ * per-form init with those core functions (Gravity Forms does) is covered
+ * by adding a distinctive piece of that code here.
+ *
+ * Scripts printed by a shortcode are not inline tags in this sense: stamp
+ * those through `do_shortcode_tag` (see inc/proto-cookiebot.php).
+ */
+function proto_taxi_reload_inline_patterns(): array
+{
+    return array_values(array_filter((array) apply_filters('proto_taxi_reload_inline_patterns', []), 'is_string'));
+}
+
+/**
+ * Reload mode per handle (`rerun` | `once`) for the scripts of this request,
+ * rules and dependency chains resolved, deny list applied.
+ *
+ * Memoized on the size of the enqueue queue: handles enqueued while the
+ * content renders (a form plugin enqueueing from its render callback) are
+ * picked up by the footer print, where the map is rebuilt.
+ */
+function proto_taxi_reload_map(): array
+{
+    global $wp_scripts;
+
+    static $map = [];
+    static $signature = null;
+
+    if (!$wp_scripts instanceof WP_Scripts) {
+        return [];
+    }
+
+    $queue = array_values(array_unique(array_merge((array) $wp_scripts->queue, (array) $wp_scripts->done)));
+    $sig   = md5(implode(',', $queue));
+    if ($signature === $sig) {
+        return $map;
+    }
+
+    $signature = $sig;
+    $map       = [];
+    $denied    = proto_taxi_denied_handles();
+    $onceOnly  = proto_taxi_once_only_handles();
+    $rules     = proto_taxi_reload_rules();
+
+    $skip = static function (string $handle) use ($denied): bool {
+        // Core registers a block.json `viewScript` as `{block}-view-script`
+        // next to Proto-Blocks' own `proto-blocks-{name}` handle for the same
+        // file; only the latter is re-run, or the file would execute twice
+        // per navigation.
+        return in_array($handle, $denied, true) || str_ends_with($handle, '-view-script');
+    };
+
+    $match = static function (string $handle) use ($rules): ?array {
+        foreach ($rules as $rule) {
+            if (!is_array($rule)) {
+                continue;
+            }
+            if (isset($rule['handle']) && $rule['handle'] === $handle) {
+                return $rule;
+            }
+            if (isset($rule['prefix']) && $rule['prefix'] !== '' && str_starts_with($handle, (string) $rule['prefix'])) {
+                return $rule;
+            }
+        }
+        return null;
+    };
+
+    // Conflicts resolve to `once`: a library that must load once for one
+    // rule must load once for everyone, or its handlers are bound twice.
+    $set = static function (string $handle, string $mode) use (&$map, $onceOnly): bool {
+        if (in_array($handle, $onceOnly, true)) {
+            $mode = 'once';
+        }
+        $current = $map[$handle] ?? null;
+        if ($current === $mode || $current === 'once') {
+            return false;
+        }
+        $map[$handle] = $mode;
+        return true;
+    };
+
+    $walk = static function (string $handle, string $mode) use (&$walk, $set, $skip, $wp_scripts): void {
+        if ($skip($handle) || !$set($handle, $mode)) {
+            return;
+        }
+        $registered = $wp_scripts->registered[$handle] ?? null;
+        foreach ($registered ? (array) $registered->deps : [] as $dep) {
+            $walk((string) $dep, $mode);
+        }
+    };
+
+    foreach ($queue as $handle) {
+        $rule = $match((string) $handle);
+        if (!$rule || $skip((string) $handle)) {
+            continue;
+        }
+        $mode = (($rule['mode'] ?? 'rerun') === 'once') ? 'once' : 'rerun';
+        if ($rule['deps'] ?? true) {
+            $walk((string) $handle, $mode);
+        } else {
+            $set((string) $handle, $mode);
+        }
+    }
+
+    return $map;
+}
+
+/**
+ * Handles that are never re-executed on a navigation whatever rule reaches
+ * them: a second jQuery instance orphans every handler and plugin bound to
+ * the first. A rule naming them, directly or through a dependency chain,
+ * gets `once`.
+ */
+function proto_taxi_once_only_handles(): array
+{
+    return (array) apply_filters('proto_taxi_once_only_handles', [
+        'jquery',
+        'jquery-core',
+        'jquery-migrate',
+        'wp-polyfill',
+    ]);
 }
 
 /**
@@ -93,21 +267,16 @@ function proto_taxi_ignore_urls(): array
 }
 
 /**
- * Stamp `data-taxi-reload` on block view scripts.
+ * Stamp `data-taxi-reload` (rerun) or `data-taxi-reload="once"` on the
+ * <script src> tag of every handle the reload map covers.
  */
 add_filter('script_loader_tag', function ($tag, $handle) {
     if (!proto_taxi_is_enabled()) {
         return $tag;
     }
 
-    if (in_array($handle, proto_taxi_denied_handles(), true)) {
-        return $tag;
-    }
-
-    $should = str_starts_with($handle, 'proto-blocks-')
-        || in_array($handle, proto_taxi_reload_handles(), true);
-
-    if (!$should || str_contains($tag, 'data-taxi-reload')) {
+    $mode = proto_taxi_reload_map()[$handle] ?? null;
+    if (null === $mode) {
         return $tag;
     }
 
@@ -127,13 +296,47 @@ add_filter('script_loader_tag', function ($tag, $handle) {
     // $tag can contain more than one <script> element — translations,
     // wp_add_inline_script(), and wp_localize_script() all prepend/append
     // their own <script id="..."> tags around the one with the src
-    // attribute, and every one of them matches a plain '<script '. Mark
-    // only the tag that actually carries the src, and only once.
-    $result = preg_replace('#<script(?=[^>]*\ssrc=)#', '<script data-taxi-reload', $tag, 1);
+    // attribute (those are stamped through wp_inline_script_attributes
+    // below), and every one of them matches a plain '<script '. Mark only
+    // the tag that actually carries the src, and only if it is not marked.
+    $attr   = 'once' === $mode ? 'data-taxi-reload="once"' : 'data-taxi-reload';
+    $result = preg_replace('#<script(?=[^>]*\ssrc=)(?![^>]*data-taxi-reload)#', '<script ' . $attr, $tag, 1);
 
     // preg_replace() returns null on a PCRE failure (e.g. backtrack limit) —
     // fall back to the untouched tag rather than dropping the script.
     return $result ?? $tag;
+}, 10, 2);
+
+/**
+ * Stamp `data-taxi-reload` on inline scripts: the localized data, before /
+ * after and translation tags WordPress prints for a covered handle (their
+ * id is `{handle}-js-{extra|before|after|translations}`), and any inline
+ * script whose code matches a proto_taxi_reload_inline_patterns entry.
+ * Inline code always re-runs: it carries the page's own values.
+ */
+add_filter('wp_inline_script_attributes', function ($attributes, $data) {
+    if (!proto_taxi_is_enabled() || !is_array($attributes) || isset($attributes['data-taxi-reload'])) {
+        return $attributes;
+    }
+
+    $id = isset($attributes['id']) ? (string) $attributes['id'] : '';
+    if ('' !== $id && preg_match('/^(.+)-js-(?:extra|before|after|translations)$/', $id, $m)) {
+        if (isset(proto_taxi_reload_map()[$m[1]])) {
+            $attributes['data-taxi-reload'] = true;
+        }
+        return $attributes;
+    }
+
+    if (is_string($data) && '' !== $data) {
+        foreach (proto_taxi_reload_inline_patterns() as $pattern) {
+            if ('' !== $pattern && str_contains($data, $pattern)) {
+                $attributes['data-taxi-reload'] = true;
+                break;
+            }
+        }
+    }
+
+    return $attributes;
 }, 10, 2);
 
 /**
