@@ -38,11 +38,12 @@ function proto_reveal_guard_is_enabled(): bool
 /**
  * Load the guard.
  *
- * Proto-Blocks prints a no-JS fallback inside <noscript> that forces every
- * not-yet-revealed element visible with !important. That is correct for readers
- * without JavaScript and inert for everyone else — until Taxi parses an
- * incoming page, which it does with scripting disabled. In that mode <noscript>
- * contents parse as real elements, so merging the new page promotes the
+ * Proto-Blocks before 2.16.2 prints a no-JS fallback inside <noscript> that
+ * forces every not-yet-revealed element visible with !important. That is
+ * correct for readers without JavaScript and inert for everyone else — until
+ * Taxi parses an incoming page, which it does with scripting disabled. In that
+ * mode <noscript> contents parse as real elements, so merging the new page
+ * promotes the
  * fallback into the live document, where its !important overrides both the
  * block's start state and its animation.
  *

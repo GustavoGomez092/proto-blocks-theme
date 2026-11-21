@@ -12,12 +12,18 @@ stylesheet, scoped so it stops applying once the block's script owns the
 element:
 
 ```css
-[data-proto-animate="manual"] [data-my-reveal] {
+html.proto-js [data-proto-animate="manual"] [data-my-reveal] {
 	opacity: 0;
 	visibility: hidden;   /* alongside opacity: GSAP's autoAlpha sets both, and
 	                         opacity alone leaves text selectable while invisible */
 }
 ```
+
+`html.proto-js` is added to `<html>` from `<head>` by Proto-Blocks 2.16.2+,
+before anything is painted. With JavaScript off it is never set, so nothing is
+hidden; with it on, the rule applies the instant the block exists, whether it
+arrived with a full load or was swapped in by Taxi. `<html>` itself survives a
+swap, so the class is always there for the incoming view.
 
 The script never hides anything. It animates opacity, and an inline style beats
 a stylesheet rule, so the animation wins for as long as it runs:
@@ -35,6 +41,15 @@ Because it is always too late. A view script is a footer script, so the browser
 has painted the section at full opacity before the script can touch it: the
 reader sees the finished layout, it vanishes, then it animates in.
 
+That includes an inline `<script>` inside the block that adds a pending class
+while the section is parsed (`document.currentScript.parentNode`). It looks
+early enough, and on a full load it is. After a Taxi swap it is not: the view
+is imported with its scripts inert and they run only once the markup is in the
+document. The script reloading loader holds the view hidden until its scripts
+settle, but caps that hold on a slow network, and a fork from before 1.6.0 has
+no hold at all. The symptom is the same flash, on navigation only. Key the
+hidden state to `html.proto-js` in CSS instead.
+
 The plugin does not cover this and says so — its `reveal-runtime.css` carries
 reduced-motion safety rules only, commented *"Blocks own their pending/done
 visuals"*.
@@ -44,10 +59,13 @@ visuals"*.
 A tempting variant is to hide unconditionally and lift the rule when the script
 "takes over", keyed on an attribute the script sets. Do not. Every lift is a
 handover, and a handover has a frame in it. Worse, `data-proto-animate` has two
-authors — the plugin's reveal runtime force-reveals a `manual` section 1500ms
-after it enters view, whatever the block's script is doing — so a rule keyed on
-it lifts on a slow load and the flash comes back, intermittently and only with a
-cold cache.
+authors: the plugin's reveal runtime force-reveals a `manual` section that its
+script has not marked `done`. Before Proto-Blocks 2.16.2 that happened 1500ms
+after the section entered view, so on a slow load a rule keyed on it lifted
+before the block's script had even arrived, and the flash came back,
+intermittently and only with a cold cache. From 2.16.2 the 1500ms only start
+once the page has loaded (capped at 10s), when every script has run, so the
+watchdog fires only for a block whose script failed.
 
 The scoped rule above has no such window: it stops applying at the same instant
 the script's own inline styles start applying, because the script sets the
@@ -58,7 +76,9 @@ attribute in the same tick it starts the animation.
 Reveals that are correct on a full page load can still flash on a Taxi
 navigation, through no fault of the block.
 
-Proto-Blocks prints its no-JS fallback inside `<noscript>`:
+Proto-Blocks before 2.16.2 prints its no-JS fallback inside `<noscript>`
+(2.16.2+ prints a plain `<style>` keyed to `html:not(.proto-js)` instead, which
+cannot leak, and the guard below leaves it alone):
 
 ```css
 [data-proto-animate]:not([data-proto-animate="done"]) *
@@ -194,8 +214,9 @@ Warm reloads hide all of this. Reproduce deliberately:
 - **Navigate**, do not reload. The flash above is navigation-only.
 - **Disable the cache**, so scripts are re-fetched and lose races they normally
   win.
-- **Delay the view script** past 1500ms so the plugin's watchdog gets there
-  first.
+- **Delay the view script** past the plugin's watchdog (1500ms after the
+  section enters view before Proto-Blocks 2.16.2; 1500ms after window load from
+  2.16.2) to see what a failed or late script leaves on screen.
 
 Trust a per-frame recorder over the eye:
 

@@ -33,6 +33,11 @@
  * Readers genuinely without JavaScript are unaffected: this never runs for
  * them, and their <noscript> still applies.
  *
+ * Proto-Blocks 2.16.2 prints its fallback as a plain <style> keyed to
+ * html:not(.proto-js) instead, which cannot leak; this leaves that one alone.
+ * The guard still covers older plugin versions and pb-motion installs that
+ * predate the same change.
+ *
  * Since the Taxi integration started stripping every <noscript> from a
  * fetched document before Taxi reads it (scripts/proto-taxi.js,
  * stripInertMarkup) and filtering noscript stylesheets out of the carry-over,
@@ -53,6 +58,11 @@
 		/* A <style> still inside its <noscript> is the real fallback, left
 		   alone. Only a promoted copy sits loose in the document. */
 		if (node.closest && node.closest('noscript')) { return false; }
+
+		/* Proto-Blocks 2.16.2+ prints its fallback as a plain <style> keyed to
+		   html:not(.proto-js). It only applies while that class is missing, so
+		   it cannot leak and is left where it is. */
+		if ((node.textContent || '').indexOf('html:not(.proto-js)') !== -1) { return false; }
 
 		return SIGNATURE.test(node.textContent || '');
 	}
